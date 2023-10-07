@@ -18,6 +18,12 @@ type TxStarter interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+// QueryExecuter is an interface to execute a query.
+type QueryExecuter interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
 // Transact is a helper function to execute a function in a transaction.
 func Transact(ctx context.Context, starter TxStarter, f func(context.Context, *sql.Tx) error) (err error) {
 	var tx *sql.Tx
@@ -44,8 +50,8 @@ func Transact(ctx context.Context, starter TxStarter, f func(context.Context, *s
 }
 
 // TruncateAll truncates all tables.
-func TruncateAll(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SHOW TABLES`)
+func TruncateAll(ctx context.Context, executer QueryExecuter) error {
+	rows, err := executer.QueryContext(ctx, `SHOW TABLES`)
 	if err != nil {
 		return errors.Wrap(err, "failed to show tables")
 	}
@@ -57,7 +63,7 @@ func TruncateAll(ctx context.Context, db *sql.DB) error {
 			return errors.Wrap(err, "failed to scan table name")
 		}
 
-		if _, err := db.ExecContext(ctx, `TRUNCATE `+tableName); err != nil {
+		if _, err := executer.ExecContext(ctx, `TRUNCATE `+tableName); err != nil {
 			return errors.Wrapf(err, "failed to truncate table: %s", tableName)
 		}
 	}
@@ -66,7 +72,7 @@ func TruncateAll(ctx context.Context, db *sql.DB) error {
 }
 
 // ExecFile executes a sql file.
-func ExecFile(ctx context.Context, db *sql.DB, path string) error {
+func ExecFile(ctx context.Context, executer QueryExecuter, path string) error {
 	if !filepath.IsAbs(path) {
 		return errors.New("path must be absolute")
 	}
@@ -90,7 +96,7 @@ func ExecFile(ctx context.Context, db *sql.DB, path string) error {
 			return errors.Wrap(err, "failed to restore sql")
 		}
 
-		if _, err := db.ExecContext(ctx, buf.String()); err != nil {
+		if _, err := executer.ExecContext(ctx, buf.String()); err != nil {
 			return errors.Wrap(err, "failed to execute sql")
 		}
 	}
