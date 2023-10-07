@@ -23,27 +23,25 @@ func TestMain(m *testing.M) {
 }
 
 func testMain(m *testing.M) int {
+	var (
+		dbTeardown func()
+		schemaPath string
+		err        error
+	)
+
 	ctx := context.Background()
 
-	{
-		var (
-			teardown func()
-			err      error
-		)
-		if db, teardown, err = testutil.SetupMySQL(ctx); err != nil {
-			return failMain(errors.Wrap(err, "failed to setup mysql"))
-		}
-		defer teardown()
+	if db, dbTeardown, err = testutil.SetupMySQL(ctx); err != nil {
+		return failMain(errors.Wrap(err, "failed to setup mysql"))
 	}
-	{
-		path, err := filepath.Abs("./testdata/schema.sql")
-		if err != nil {
-			return failMain(errors.Wrap(err, "failed to prepare schema sql path"))
-		}
+	defer dbTeardown()
 
-		if err := sqlutil.ExecFile(ctx, db, path); err != nil {
-			return failMain(errors.Wrap(err, "failed to execute schema sql"))
-		}
+	if schemaPath, err = filepath.Abs("./testdata/schema.sql"); err != nil {
+		return failMain(errors.Wrap(err, "failed to prepare schema sql path"))
+	}
+
+	if err = sqlutil.ExecFile(ctx, db, schemaPath); err != nil {
+		return failMain(errors.Wrap(err, "failed to execute schema sql"))
 	}
 
 	return m.Run()
@@ -59,15 +57,13 @@ func setup(t *testing.T) {
 
 	ctx := context.Background()
 
-	{
-		path, err := filepath.Abs("./testdata/fixture.sql")
-		if err != nil {
-			t.Fatal(errors.Wrap(err, "failed to prepare fixture sql path"))
-		}
+	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
+	if err != nil {
+		t.Fatal(errors.Wrap(err, "failed to prepare fixture sql path"))
+	}
 
-		if err := sqlutil.ExecFile(ctx, db, path); err != nil {
-			t.Fatal(errors.Wrap(err, "failed to execute fixture sql"))
-		}
+	if err := sqlutil.ExecFile(ctx, db, fixturePath); err != nil {
+		t.Fatal(errors.Wrap(err, "failed to execute fixture sql"))
 	}
 }
 
@@ -77,7 +73,7 @@ func teardown(t *testing.T) {
 	ctx := context.Background()
 
 	if err := sqlutil.TruncateAll(ctx, db); err != nil {
-		t.Fatal(errors.Wrap(err, "failed to truncate all"))
+		t.Fatal(errors.Wrap(err, "failed to truncate all tables"))
 	}
 }
 
