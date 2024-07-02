@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/format"
 	_ "github.com/pingcap/tidb/parser/test_driver"
-	"github.com/pkg/errors"
+	"github.com/samber/oops"
 )
 
 // TxStarter is an interface to start a transaction.
@@ -28,7 +28,7 @@ type QueryExecuter interface {
 func Transact(ctx context.Context, starter TxStarter, f func(context.Context, *sql.Tx) error) (err error) {
 	var tx *sql.Tx
 	if tx, err = starter.BeginTx(ctx, nil); err != nil {
-		return errors.Wrap(err, "failed to begin transaction")
+		return oops.Wrapf(err, "failed to begin transaction")
 	}
 
 	defer func() {
@@ -39,7 +39,7 @@ func Transact(ctx context.Context, starter TxStarter, f func(context.Context, *s
 			tx.Rollback()
 		} else {
 			if err = tx.Commit(); err != nil {
-				err = errors.Wrap(err, "failed to commit transaction")
+				err = oops.Wrapf(err, "failed to commit transaction")
 			}
 		}
 	}()
@@ -53,18 +53,18 @@ func Transact(ctx context.Context, starter TxStarter, f func(context.Context, *s
 func TruncateAll(ctx context.Context, executer QueryExecuter) error {
 	rows, err := executer.QueryContext(ctx, `SHOW TABLES`)
 	if err != nil {
-		return errors.Wrap(err, "failed to show tables")
+		return oops.Wrapf(err, "failed to show tables")
 	}
 
 	var tableName string
 
 	for rows.Next() {
 		if err := rows.Scan(&tableName); err != nil {
-			return errors.Wrap(err, "failed to scan table name")
+			return oops.Wrapf(err, "failed to scan table name")
 		}
 
 		if _, err := executer.ExecContext(ctx, `TRUNCATE `+tableName); err != nil {
-			return errors.Wrapf(err, "failed to truncate table: %s", tableName)
+			return oops.Wrapf(err, "failed to truncate table: %s", tableName)
 		}
 	}
 
@@ -74,17 +74,17 @@ func TruncateAll(ctx context.Context, executer QueryExecuter) error {
 // ExecFile executes a sql file.
 func ExecFile(ctx context.Context, executer QueryExecuter, path string) error {
 	if !filepath.IsAbs(path) {
-		return errors.New("path must be absolute")
+		return oops.Errorf("path must be absolute")
 	}
 
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return errors.Wrapf(err, "failed to read file: %s", path)
+		return oops.Wrapf(err, "failed to read file: %s", path)
 	}
 
 	stmtNodes, _, err := parser.New().Parse(string(b), "", "")
 	if err != nil {
-		return errors.Wrap(err, "failed to parse sql")
+		return oops.Wrapf(err, "failed to parse sql")
 	}
 
 	buf := new(bytes.Buffer)
@@ -93,11 +93,11 @@ func ExecFile(ctx context.Context, executer QueryExecuter, path string) error {
 		buf.Reset()
 
 		if err := stmtNode.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, buf)); err != nil {
-			return errors.Wrap(err, "failed to restore sql")
+			return oops.Wrapf(err, "failed to restore sql")
 		}
 
 		if _, err := executer.ExecContext(ctx, buf.String()); err != nil {
-			return errors.Wrap(err, "failed to execute sql")
+			return oops.Wrapf(err, "failed to execute sql")
 		}
 	}
 
