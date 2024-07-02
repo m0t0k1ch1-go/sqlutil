@@ -3,12 +3,13 @@ package sqlutil_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/pkg/errors"
+	"github.com/samber/oops"
 
 	"github.com/m0t0k1ch1-go/sqlutil"
 	"github.com/m0t0k1ch1-go/sqlutil/internal/testutil"
@@ -32,16 +33,16 @@ func testMain(m *testing.M) int {
 	ctx := context.Background()
 
 	if db, dbTeardown, err = testutil.SetupMySQL(ctx); err != nil {
-		return failMain(errors.Wrap(err, "failed to setup mysql"))
+		return failMain(oops.Wrapf(err, "failed to setup mysql"))
 	}
 	defer dbTeardown()
 
 	if schemaPath, err = filepath.Abs("./testdata/schema.sql"); err != nil {
-		return failMain(errors.Wrap(err, "failed to prepare schema sql path"))
+		return failMain(oops.Wrapf(err, "failed to prepare schema sql path"))
 	}
 
 	if err = sqlutil.ExecFile(ctx, db, schemaPath); err != nil {
-		return failMain(errors.Wrap(err, "failed to execute schema sql"))
+		return failMain(oops.Wrapf(err, "failed to execute schema sql"))
 	}
 
 	return m.Run()
