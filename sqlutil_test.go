@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/samber/oops"
+	"github.com/stretchr/testify/require"
 
 	"github.com/m0t0k1ch1-go/sqlutil"
 	"github.com/m0t0k1ch1-go/sqlutil/internal/testutil"
@@ -24,25 +25,27 @@ func TestMain(m *testing.M) {
 }
 
 func testMain(m *testing.M) int {
-	var (
-		dbTeardown func()
-		schemaPath string
-		err        error
-	)
-
 	ctx := context.Background()
 
-	if db, dbTeardown, err = testutil.SetupMySQL(ctx); err != nil {
-		return failMain(oops.Wrapf(err, "failed to setup mysql"))
-	}
-	defer dbTeardown()
+	{
+		var (
+			dbTeardown func()
+			schemaPath string
+			err        error
+		)
 
-	if schemaPath, err = filepath.Abs("./testdata/schema.sql"); err != nil {
-		return failMain(oops.Wrapf(err, "failed to prepare schema sql path"))
-	}
+		if db, dbTeardown, err = testutil.SetUpMySQL(ctx); err != nil {
+			return failMain(oops.Wrapf(err, "failed to set up mysql"))
+		}
+		defer dbTeardown()
 
-	if err = sqlutil.ExecFile(ctx, db, schemaPath); err != nil {
-		return failMain(oops.Wrapf(err, "failed to execute schema sql"))
+		if schemaPath, err = filepath.Abs("./testdata/schema.sql"); err != nil {
+			return failMain(oops.Wrapf(err, "failed to prepare schema path"))
+		}
+
+		if err = sqlutil.ExecFile(ctx, db, schemaPath); err != nil {
+			return failMain(oops.Wrapf(err, "failed to exec schema sql"))
+		}
 	}
 
 	return m.Run()
@@ -59,13 +62,9 @@ func setup(t *testing.T) {
 	ctx := context.Background()
 
 	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
-	if err := sqlutil.ExecFile(ctx, db, fixturePath); err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, sqlutil.ExecFile(ctx, db, fixturePath))
 }
 
 func teardown(t *testing.T) {
@@ -73,12 +72,10 @@ func teardown(t *testing.T) {
 
 	ctx := context.Background()
 
-	if err := sqlutil.TruncateAll(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, sqlutil.TruncateAll(ctx, db))
 }
 
-func TestTransact(t *testing.T) {
+func TestTransactFailure(t *testing.T) {
 	setup(t)
 	t.Cleanup(func() {
 		teardown(t)
@@ -86,77 +83,58 @@ func TestTransact(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("rollback", func(t *testing.T) {
-		someErr := errors.New("an error has occurred")
+	someErr := errors.New("something went wrong")
 
-		if err := sqlutil.Transact(ctx, db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-			if _, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`); txErr != nil {
-				return txErr
-			}
-			if _, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`); txErr != nil {
-				return txErr
-			}
-			return someErr
-		}); !errors.Is(err, someErr) {
-			t.Fatal(err)
+	require.ErrorIs(t, sqlutil.Transact(ctx, db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+		if _, txErr = tx.ExecContext(txCtx, "UPDATE task SET is_completed = true WHERE id = 1"); txErr != nil {
+			return oops.Wrapf(txErr, "failed to update task")
 		}
 
-		var task struct {
-			IsCompleted bool
+		if _, txErr = tx.ExecContext(txCtx, "UPDATE task SET is_completed = true WHERE id = 2"); txErr != nil {
+			return oops.Wrapf(txErr, "failed to update task")
 		}
 
-		if err := db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&task.IsCompleted); err != nil {
-			t.Fatal(err)
-		}
-		testutil.Equal(t, false, task.IsCompleted)
+		return someErr
+	}), someErr)
 
-		if err := db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&task.IsCompleted); err != nil {
-			t.Fatal(err)
-		}
-		testutil.Equal(t, false, task.IsCompleted)
-	})
+	var isTaskCompleted bool
 
-	t.Run("commit", func(t *testing.T) {
-		if err := sqlutil.Transact(ctx, db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-			if _, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`); txErr != nil {
-				return txErr
-			}
-			if _, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`); txErr != nil {
-				return txErr
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
+	require.Nil(t, db.QueryRowContext(ctx, "SELECT is_completed FROM task WHERE id = 1").Scan(&isTaskCompleted))
 
-		var task struct {
-			IsCompleted bool
-		}
+	require.False(t, isTaskCompleted)
 
-		if err := db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&task.IsCompleted); err != nil {
-			t.Fatal(err)
-		}
-		testutil.Equal(t, true, task.IsCompleted)
+	require.Nil(t, db.QueryRowContext(ctx, "SELECT is_completed FROM task WHERE id = 2").Scan(&isTaskCompleted))
 
-		if err := db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&task.IsCompleted); err != nil {
-			t.Fatal(err)
-		}
-		testutil.Equal(t, true, task.IsCompleted)
-	})
+	require.False(t, isTaskCompleted)
 }
 
-func TestTeardown(t *testing.T) {
+func TestTransactSuccess(t *testing.T) {
+	setup(t)
+	t.Cleanup(func() {
+		teardown(t)
+	})
+
 	ctx := context.Background()
 
-	var rowCnt int
+	require.Nil(t, sqlutil.Transact(ctx, db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+		if _, txErr = tx.ExecContext(txCtx, "UPDATE task SET is_completed = true WHERE id = 1"); txErr != nil {
+			return oops.Wrapf(txErr, "failed to update task")
+		}
 
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user`).Scan(&rowCnt); err != nil {
-		t.Fatal(err)
-	}
-	testutil.Equal(t, 0, rowCnt)
+		if _, txErr = tx.ExecContext(txCtx, "UPDATE task SET is_completed = true WHERE id = 2"); txErr != nil {
+			return oops.Wrapf(txErr, "failed to update task")
+		}
 
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task`).Scan(&rowCnt); err != nil {
-		t.Fatal(err)
-	}
-	testutil.Equal(t, 0, rowCnt)
+		return
+	}))
+
+	var isTaskCompleted bool
+
+	require.Nil(t, db.QueryRowContext(ctx, "SELECT is_completed FROM task WHERE id = 1").Scan(&isTaskCompleted))
+
+	require.True(t, isTaskCompleted)
+
+	require.Nil(t, db.QueryRowContext(ctx, "SELECT is_completed FROM task WHERE id = 2").Scan(&isTaskCompleted))
+
+	require.True(t, isTaskCompleted)
 }
