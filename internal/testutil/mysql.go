@@ -12,24 +12,24 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-type mysqlConfig struct {
-	host   string
-	port   int
-	user   string
-	dbName string
+type mysqlDBConfig struct {
+	Host string
+	Port int
+	User string
+	Name string
 }
 
-func (conf mysqlConfig) dsn() string {
+func (conf mysqlDBConfig) DSN() string {
 	return fmt.Sprintf(
 		"%s:@tcp(%s:%d)/%s",
-		conf.user, conf.host, conf.port, conf.dbName,
+		conf.User, conf.Host, conf.Port, conf.Name,
 	)
 }
 
-func SetupMySQL(ctx context.Context) (*sql.DB, func(), error) {
-	conf := mysqlConfig{
-		user:   "root",
-		dbName: "test",
+func SetUpMySQL(ctx context.Context) (*sql.DB, func(), error) {
+	conf := mysqlDBConfig{
+		User: "root",
+		Name: "test",
 	}
 
 	req := testcontainers.ContainerRequest{
@@ -37,13 +37,13 @@ func SetupMySQL(ctx context.Context) (*sql.DB, func(), error) {
 		ExposedPorts: []string{"3306/tcp"},
 		Env: map[string]string{
 			"MYSQL_ALLOW_EMPTY_PASSWORD": "yes",
-			"MYSQL_DATABASE":             conf.dbName,
+			"MYSQL_DATABASE":             conf.Name,
 		},
 		WaitingFor: wait.ForSQL("3306", "mysql", func(host string, port nat.Port) string {
-			conf.host = host
-			conf.port = port.Int()
+			conf.Host = host
+			conf.Port = port.Int()
 
-			return conf.dsn()
+			return conf.DSN()
 		}),
 	}
 
@@ -55,9 +55,9 @@ func SetupMySQL(ctx context.Context) (*sql.DB, func(), error) {
 		return nil, nil, oops.Wrapf(err, "failed to create container")
 	}
 
-	db, err := sql.Open("mysql", conf.dsn())
+	db, err := sql.Open("mysql", conf.DSN())
 	if err != nil {
-		return nil, nil, oops.Wrapf(err, "failed to open mysql db: %s", conf.dbName)
+		return nil, nil, oops.Wrapf(err, "failed to open mysql db: %s", conf.Name)
 	}
 
 	return db, func() {
