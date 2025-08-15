@@ -13,5 +13,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+      - name: Lint
+        run: make lint
       - name: Test
         run: make test
