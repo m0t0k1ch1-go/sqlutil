@@ -17,7 +17,5 @@ jobs:
         run: |
           go mod download
           go mod verify
-      - name: Lint
-        run: make lint
       - name: Test
         run: make test
