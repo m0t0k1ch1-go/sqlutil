@@ -4,5 +4,5 @@ lint:
 	go tool staticcheck ./...
 
 .PHONY: test
-test:
+test: lint
 	go test -v ./...
