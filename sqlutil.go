@@ -81,19 +81,19 @@ func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) err
 
 	stmtNodes, _, err := tidbparser.New().Parse(string(b), "", "")
 	if err != nil {
-		return oops.Wrapf(err, "failed to parse sql")
+		return oops.Wrapf(err, "failed to parse queries")
 	}
 
 	for _, stmtNode := range stmtNodes {
 		var buf bytes.Buffer
 		{
 			if err := stmtNode.Restore(tidbparserformat.NewRestoreCtx(tidbparserformat.DefaultRestoreFlags, &buf)); err != nil {
-				return oops.Wrapf(err, "failed to restore sql")
+				return oops.Wrapf(err, "failed to restore query")
 			}
 		}
 
 		if _, err := queryExecutor.ExecContext(ctx, buf.String()); err != nil {
-			return oops.Wrapf(err, "failed to execute sql")
+			return oops.Wrapf(err, "failed to execute query")
 		}
 	}
 
