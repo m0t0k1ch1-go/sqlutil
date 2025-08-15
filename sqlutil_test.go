@@ -73,21 +73,30 @@ func setup(t *testing.T) {
 	require.NoError(t, err)
 }
 
+type Task struct {
+	ID          uint64
+	UserID      uint64
+	Title       string
+	IsCompleted bool
+}
+
 func TestTransactFailure(t *testing.T) {
 	setup(t)
 
 	ctx := t.Context()
 
-	taskIDs := []uint64{
-		1,
-		2,
-	}
+	tasks, err := listAllTasks(ctx, mysqlDB)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, tasks)
+
+	taskCnt := len(tasks)
 
 	errSomethingWentWrong := errors.New("something went wrong")
 
-	err := sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-		for _, taskID := range taskIDs {
-			_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = ?`, taskID)
+	err = sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+		for _, task := range tasks {
+			txErr = completeTask(txCtx, tx, task.ID)
 			require.NoError(t, txErr)
 		}
 
@@ -95,14 +104,13 @@ func TestTransactFailure(t *testing.T) {
 	})
 	require.ErrorIs(t, err, errSomethingWentWrong)
 
-	for _, taskID := range taskIDs {
-		var isCompleted bool
-		{
-			err := mysqlDB.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = ?`, taskID).Scan(&isCompleted)
-			require.NoError(t, err)
-		}
+	tasks, err = listAllTasks(ctx, mysqlDB)
+	require.NoError(t, err)
 
-		require.False(t, isCompleted)
+	require.Len(t, tasks, taskCnt)
+
+	for _, task := range tasks {
+		require.False(t, task.IsCompleted, "task id: %d", task.ID)
 	}
 }
 
@@ -111,14 +119,16 @@ func TestTransactSuccess(t *testing.T) {
 
 	ctx := t.Context()
 
-	taskIDs := []uint64{
-		1,
-		2,
-	}
+	tasks, err := listAllTasks(ctx, mysqlDB)
+	require.NoError(t, err)
 
-	err := sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-		for _, taskID := range taskIDs {
-			_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = ?`, taskID)
+	require.NotEmpty(t, tasks)
+
+	taskCnt := len(tasks)
+
+	err = sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+		for _, task := range tasks {
+			txErr = completeTask(txCtx, tx, task.ID)
 			require.NoError(t, txErr)
 		}
 
@@ -126,13 +136,53 @@ func TestTransactSuccess(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	for _, taskID := range taskIDs {
-		var isCompleted bool
+	tasks, err = listAllTasks(ctx, mysqlDB)
+	require.NoError(t, err)
+
+	require.Len(t, tasks, taskCnt)
+
+	for _, task := range tasks {
+		require.True(t, task.IsCompleted, "task id: %d", task.ID)
+	}
+}
+
+func listAllTasks(ctx context.Context, queryExecutor sqlutil.QueryExecutor) ([]Task, error) {
+	rows, err := queryExecutor.QueryContext(ctx, `SELECT id, user_id, title, is_completed FROM task ORDER BY id`)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to list all tasks")
+	}
+	defer rows.Close()
+
+	var tasks []Task
+
+	for rows.Next() {
+		var task Task
 		{
-			err := mysqlDB.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = ?`, taskID).Scan(&isCompleted)
-			require.NoError(t, err)
+			if err := rows.Scan(
+				&task.ID,
+				&task.UserID,
+				&task.Title,
+				&task.IsCompleted,
+			); err != nil {
+				return nil, oops.Wrapf(err, "failed to scan task")
+			}
 		}
 
-		require.True(t, isCompleted)
+		tasks = append(tasks, task)
 	}
+
+	if err := rows.Close(); err != nil {
+		return nil, oops.Wrapf(err, "failed to close rows")
+	}
+	if err := rows.Err(); err != nil {
+		return nil, oops.Wrap(err)
+	}
+
+	return tasks, nil
+}
+
+func completeTask(ctx context.Context, queryExecutor sqlutil.QueryExecutor, id uint64) error {
+	_, err := queryExecutor.ExecContext(ctx, `UPDATE task SET is_completed = true WHERE id = ?`, id)
+
+	return err
 }
