@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	testcontainersmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/m0t0k1ch1-go/sqlutil/v2"
 )
@@ -29,42 +30,46 @@ func TestMain(m *testing.M) {
 func testMain(m *testing.M) int {
 	ctx := context.Background()
 
-	{
-		user := "test"
-		password := "test"
-		dbName := "test"
-
-		ctr, err := testcontainersmysql.Run(
-			ctx,
-			"mysql:8.0",
-			testcontainersmysql.WithUsername(user),
-			testcontainersmysql.WithPassword(password),
-			testcontainersmysql.WithDatabase(dbName),
-			testcontainersmysql.WithScripts("./testdata/schema.sql"),
-		)
-		if err != nil {
-			return failMain(oops.Wrapf(err, "failed to run mysql container"))
+	var mysqlCtr *testcontainersmysql.MySQLContainer
+	defer func() {
+		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
+			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
 		}
-		defer func() {
-			if err := testcontainers.TerminateContainer(ctr); err != nil {
-				fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
+	}()
+
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		{
+			var err error
+
+			mysqlCtr, err = testcontainersmysql.Run(
+				ctx,
+				"mysql:8.0",
+				testcontainersmysql.WithScripts("./testdata/schema.sql"),
+			)
+			if err != nil {
+				return oops.Wrapf(err, "failed to run mysql container")
 			}
-		}()
-
-		endpoint, err := ctr.PortEndpoint(ctx, "3306/tcp", "")
-		if err != nil {
-			return failMain(oops.Wrapf(err, "failed to get mysql container endpoint"))
 		}
 
-		db, err := sql.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s)/%s?multiStatements=true",
-			user, password, endpoint, dbName,
-		))
+		dsn, err := mysqlCtr.ConnectionString(ctx, "multiStatements=true")
 		if err != nil {
-			return failMain(oops.Wrapf(err, "failed to open mysql db: %s", dbName))
+			return oops.Wrapf(err, "failed to get mysql connection string")
 		}
 
-		mysqlDB = db
+		{
+			var err error
+
+			mysqlDB, err = sql.Open("mysql", dsn)
+			if err != nil {
+				return oops.Wrapf(err, "failed to open mysql db: %s", dsn)
+			}
+		}
+
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return failMain(err)
 	}
 
 	return m.Run()
@@ -79,29 +84,30 @@ func failMain(err error) int {
 func setup(t *testing.T) {
 	t.Helper()
 
-	t.Cleanup(func() {
-		// should not use t.Context()
-		ctx := context.Background()
-
-		cleanerPath, err := filepath.Abs("./testdata/cleaner.sql")
-		require.NoError(t, err)
-
-		err = sqlutil.ExecFile(ctx, mysqlDB, cleanerPath)
-		require.NoError(t, err)
-	})
+	dbs := []*sql.DB{
+		mysqlDB,
+	}
 
 	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
 	require.NoError(t, err)
 
-	err = sqlutil.ExecFile(t.Context(), mysqlDB, fixturePath)
+	cleanerPath, err := filepath.Abs("./testdata/cleaner.sql")
 	require.NoError(t, err)
-}
 
-type Task struct {
-	ID          uint64
-	UserID      uint64
-	Title       string
-	IsCompleted bool
+	t.Cleanup(func() {
+		// should not use t.Context()
+		ctx := context.Background()
+
+		for _, db := range dbs {
+			err = sqlutil.ExecFile(ctx, db, cleanerPath)
+			require.NoError(t, err)
+		}
+	})
+
+	for _, db := range dbs {
+		err = sqlutil.ExecFile(t.Context(), db, fixturePath)
+		require.NoError(t, err)
+	}
 }
 
 func TestTransactFailure(t *testing.T) {
