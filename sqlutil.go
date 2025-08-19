@@ -1,15 +1,11 @@
 package sqlutil
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 
-	tidbparser "github.com/pingcap/tidb/parser"
-	tidbparserformat "github.com/pingcap/tidb/parser/format"
-	_ "github.com/pingcap/tidb/parser/test_driver"
 	"github.com/samber/oops"
 )
 
@@ -68,7 +64,8 @@ func TruncateAll(ctx context.Context, queryExecutor QueryExecutor) error {
 	return nil
 }
 
-// ExecFile executes a sql file.
+// ExecFile executes an sql file.
+// When using github.com/go-sql-driver/mysql, ensure `multiStatements=true`.
 func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) error {
 	if !filepath.IsAbs(path) {
 		return oops.New("path must be absolute")
@@ -79,22 +76,8 @@ func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) err
 		return oops.Wrapf(err, "failed to read file")
 	}
 
-	stmtNodes, _, err := tidbparser.New().Parse(string(b), "", "")
-	if err != nil {
-		return oops.Wrapf(err, "failed to parse queries")
-	}
-
-	for _, stmtNode := range stmtNodes {
-		var buf bytes.Buffer
-		{
-			if err := stmtNode.Restore(tidbparserformat.NewRestoreCtx(tidbparserformat.DefaultRestoreFlags, &buf)); err != nil {
-				return oops.Wrapf(err, "failed to restore query")
-			}
-		}
-
-		if _, err := queryExecutor.ExecContext(ctx, buf.String()); err != nil {
-			return oops.Wrapf(err, "failed to execute query")
-		}
+	if _, err := queryExecutor.ExecContext(ctx, string(b)); err != nil {
+		return oops.Wrap(err)
 	}
 
 	return nil

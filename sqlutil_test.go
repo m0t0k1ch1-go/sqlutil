@@ -57,7 +57,7 @@ func testMain(m *testing.M) int {
 		}
 
 		db, err := sql.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s)/%s",
+			"%s:%s@tcp(%s)/%s?multiStatements=true",
 			user, password, endpoint, dbName,
 		))
 		if err != nil {
