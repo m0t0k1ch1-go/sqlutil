@@ -134,6 +134,7 @@ func setup(t *testing.T) {
 
 	dbs := []*sql.DB{
 		mysqlDB,
+		psqlDB,
 	}
 
 	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
@@ -161,63 +162,109 @@ func setup(t *testing.T) {
 func TestTransactFailure(t *testing.T) {
 	setup(t)
 
-	ctx := t.Context()
-
-	taskIDs := []uint64{
-		1,
-		2,
-	}
-
 	errSomethingWentWrong := errors.New("something went wrong")
 
-	err := sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-		for _, taskID := range taskIDs {
-			_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = ?`, taskID)
-			require.NoError(t, txErr)
-		}
-
-		return errSomethingWentWrong
-	})
-	require.ErrorIs(t, err, errSomethingWentWrong)
-
-	for _, taskID := range taskIDs {
-		var isCompleted bool
+	tcs := []struct {
+		name string
+		db   *sql.DB
+	}{
 		{
-			err := mysqlDB.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = ?`, taskID).Scan(&isCompleted)
-			require.NoError(t, err)
-		}
+			name: "mysql",
+			db:   mysqlDB,
+		},
+		{
+			name: "postgresql",
+			db:   psqlDB,
+		},
+	}
 
-		require.False(t, isCompleted)
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+
+			err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`)
+				require.NoError(t, txErr)
+
+				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`)
+				require.NoError(t, txErr)
+
+				return errSomethingWentWrong
+			})
+			require.ErrorIs(t, err, errSomethingWentWrong)
+
+			{
+				var isCompleted bool
+				{
+					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&isCompleted)
+					require.NoError(t, err)
+				}
+
+				require.False(t, isCompleted)
+			}
+			{
+				var isCompleted bool
+				{
+					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&isCompleted)
+					require.NoError(t, err)
+				}
+
+				require.False(t, isCompleted)
+			}
+		})
 	}
 }
 
 func TestTransactSuccess(t *testing.T) {
 	setup(t)
 
-	ctx := t.Context()
-
-	taskIDs := []uint64{
-		1,
-		2,
+	tcs := []struct {
+		name string
+		db   *sql.DB
+	}{
+		{
+			name: "mysql",
+			db:   mysqlDB,
+		},
+		{
+			name: "postgresql",
+			db:   psqlDB,
+		},
 	}
 
-	err := sqlutil.Transact(ctx, mysqlDB, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-		for _, taskID := range taskIDs {
-			_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = ?`, taskID)
-			require.NoError(t, txErr)
-		}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
 
-		return
-	})
-	require.NoError(t, err)
+			err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
+				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`)
+				require.NoError(t, txErr)
 
-	for _, taskID := range taskIDs {
-		var isCompleted bool
-		{
-			err := mysqlDB.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = ?`, taskID).Scan(&isCompleted)
+				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`)
+				require.NoError(t, txErr)
+
+				return
+			})
 			require.NoError(t, err)
-		}
 
-		require.True(t, isCompleted)
+			{
+				var isCompleted bool
+				{
+					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&isCompleted)
+					require.NoError(t, err)
+				}
+
+				require.True(t, isCompleted)
+			}
+			{
+				var isCompleted bool
+				{
+					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&isCompleted)
+					require.NoError(t, err)
+				}
+
+				require.True(t, isCompleted)
+			}
+		})
 	}
 }
