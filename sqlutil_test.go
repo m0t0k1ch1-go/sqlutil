@@ -18,7 +18,7 @@ import (
 	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/m0t0k1ch1-go/sqlutil/v2"
+	"github.com/m0t0k1ch1-go/sqlutil/v3"
 )
 
 var (
