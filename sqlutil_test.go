@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/samber/oops"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	testcontainersmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 
 	"github.com/m0t0k1ch1-go/sqlutil/v2"
-	"github.com/m0t0k1ch1-go/sqlutil/v2/internal/testutil"
 )
 
 var (
@@ -28,19 +30,38 @@ func testMain(m *testing.M) int {
 	ctx := context.Background()
 
 	{
-		db, dbTeardown, err := testutil.SetUpMySQL(ctx)
-		if err != nil {
-			return failMain(oops.Wrapf(err, "failed to set up mysql"))
-		}
-		defer dbTeardown()
+		user := "test"
+		password := "test"
+		dbName := "test"
 
-		schemaPath, err := filepath.Abs("./testdata/schema.sql")
+		ctr, err := testcontainersmysql.Run(
+			ctx,
+			"mysql:8.0",
+			testcontainersmysql.WithUsername(user),
+			testcontainersmysql.WithPassword(password),
+			testcontainersmysql.WithDatabase(dbName),
+			testcontainersmysql.WithScripts("./testdata/schema.sql"),
+		)
 		if err != nil {
-			return failMain(oops.Wrapf(err, "failed to prepare schema path"))
+			return failMain(oops.Wrapf(err, "failed to run mysql container"))
+		}
+		defer func() {
+			if err := testcontainers.TerminateContainer(ctr); err != nil {
+				fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
+			}
+		}()
+
+		endpoint, err := ctr.PortEndpoint(ctx, "3306/tcp", "")
+		if err != nil {
+			return failMain(oops.Wrapf(err, "failed to get mysql container endpoint"))
 		}
 
-		if err := sqlutil.ExecFile(ctx, db, schemaPath); err != nil {
-			return failMain(oops.Wrapf(err, "failed to exec schema sql"))
+		db, err := sql.Open("mysql", fmt.Sprintf(
+			"%s:%s@tcp(%s)/%s",
+			user, password, endpoint, dbName,
+		))
+		if err != nil {
+			return failMain(oops.Wrapf(err, "failed to open mysql db: %s", dbName))
 		}
 
 		mysqlDB = db
