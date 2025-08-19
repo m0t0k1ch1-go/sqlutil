@@ -1,2 +1,1 @@
-TRUNCATE `user`;
-TRUNCATE `task`;
+TRUNCATE task;
