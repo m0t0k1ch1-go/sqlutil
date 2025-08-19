@@ -79,19 +79,12 @@ func testMain(m *testing.M) int {
 		return nil
 	})
 	g.Go(func() error {
-		user := "test"
-		password := "test"
-		dbName := "test"
-
 		{
 			var err error
 
 			psqlCtr, err = testcontainerspostgres.Run(
 				ctx,
 				"postgres:17-alpine",
-				testcontainerspostgres.WithUsername(user),
-				testcontainerspostgres.WithPassword(password),
-				testcontainerspostgres.WithDatabase(dbName),
 				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
 				testcontainerspostgres.BasicWaitStrategies(),
 			)
