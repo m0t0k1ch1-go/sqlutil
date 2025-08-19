@@ -94,7 +94,7 @@ func testMain(m *testing.M) int {
 
 			psqlCtr, err = testcontainerspostgres.Run(
 				ctx,
-				"postgres:17-alpine",
+				"postgres:17.6-alpine",
 				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
 				testcontainerspostgres.BasicWaitStrategies(),
 			)
