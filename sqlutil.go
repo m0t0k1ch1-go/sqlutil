@@ -3,10 +3,10 @@ package sqlutil
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/samber/oops"
 )
 
 // TxStarter is an interface to start a transaction.
@@ -24,7 +24,7 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 	var tx *sql.Tx
 	{
 		if tx, err = txStarter.BeginTx(ctx, nil); err != nil {
-			return oops.Wrapf(err, "failed to begin transaction")
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
 	}
 
@@ -36,12 +36,12 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 			tx.Rollback()
 		} else {
 			if err = tx.Commit(); err != nil {
-				err = oops.Wrapf(err, "failed to commit transaction")
+				err = fmt.Errorf("failed to commit transaction: %w", err)
 			}
 		}
 	}()
 
-	err = oops.Wrap(f(ctx, tx))
+	err = f(ctx, tx)
 
 	return
 }
@@ -50,16 +50,16 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 // When using github.com/go-sql-driver/mysql, ensure `multiStatements=true`.
 func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) error {
 	if !filepath.IsAbs(path) {
-		return oops.New("path must be absolute")
+		return errors.New("path must be absolute")
 	}
 
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return oops.Wrapf(err, "failed to read file")
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	if _, err := queryExecutor.ExecContext(ctx, string(b)); err != nil {
-		return oops.Wrap(err)
+		return err
 	}
 
 	return nil
