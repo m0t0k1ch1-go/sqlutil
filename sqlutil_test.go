@@ -33,15 +33,21 @@ func TestMain(m *testing.M) {
 func testMain(m *testing.M) int {
 	ctx := context.Background()
 
-	var mysqlCtr *testcontainersmysql.MySQLContainer
+	var (
+		mysqlCtr *testcontainersmysql.MySQLContainer
+		psqlCtr  *testcontainerspostgres.PostgresContainer
+	)
+
 	defer func() {
+		if err := mysqlDB.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to close mysql db").Error())
+		}
+		if err := psqlDB.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to close postgresql db").Error())
+		}
 		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
 			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
 		}
-	}()
-
-	var psqlCtr *testcontainerspostgres.PostgresContainer
-	defer func() {
 		if err := testcontainers.TerminateContainer(psqlCtr); err != nil {
 			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate postgresql container").Error())
 		}
