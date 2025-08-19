@@ -6,10 +6,12 @@ toolchain go1.24.6
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/jackc/pgx/v5 v5.7.5
 	github.com/samber/oops v1.19.0
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.38.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.38.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.38.0
 	golang.org/x/sync v0.16.0
 )
 
@@ -38,6 +40,9 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20250317134145-8bc96cf8fc35 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect

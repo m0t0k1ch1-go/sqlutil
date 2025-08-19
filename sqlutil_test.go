@@ -10,10 +10,12 @@ import (
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/samber/oops"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	testcontainersmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
+	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/m0t0k1ch1-go/sqlutil/v2"
@@ -21,6 +23,7 @@ import (
 
 var (
 	mysqlDB *sql.DB
+	psqlDB  *sql.DB
 )
 
 func TestMain(m *testing.M) {
@@ -34,6 +37,13 @@ func testMain(m *testing.M) int {
 	defer func() {
 		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
 			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
+		}
+	}()
+
+	var psqlCtr *testcontainerspostgres.PostgresContainer
+	defer func() {
+		if err := testcontainers.TerminateContainer(psqlCtr); err != nil {
+			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate postgresql container").Error())
 		}
 	}()
 
@@ -63,6 +73,44 @@ func testMain(m *testing.M) int {
 			mysqlDB, err = sql.Open("mysql", dsn)
 			if err != nil {
 				return oops.Wrapf(err, "failed to open mysql db: %s", dsn)
+			}
+		}
+
+		return nil
+	})
+	g.Go(func() error {
+		user := "test"
+		password := "test"
+		dbName := "test"
+
+		{
+			var err error
+
+			psqlCtr, err = testcontainerspostgres.Run(
+				ctx,
+				"postgres:17-alpine",
+				testcontainerspostgres.WithUsername(user),
+				testcontainerspostgres.WithPassword(password),
+				testcontainerspostgres.WithDatabase(dbName),
+				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
+				testcontainerspostgres.BasicWaitStrategies(),
+			)
+			if err != nil {
+				return oops.Wrapf(err, "failed to run postgresql container")
+			}
+		}
+
+		dsn, err := psqlCtr.ConnectionString(ctx)
+		if err != nil {
+			return oops.Wrapf(err, "failed to get postgresql connection string")
+		}
+
+		{
+			var err error
+
+			psqlDB, err = sql.Open("pgx", dsn)
+			if err != nil {
+				return oops.Wrapf(err, "failed to open postgresql db: %s", dsn)
 			}
 		}
 
