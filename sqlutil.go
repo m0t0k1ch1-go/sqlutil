@@ -48,22 +48,6 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 	return
 }
 
-// TruncateAll truncates all tables.
-func TruncateAll(ctx context.Context, queryExecutor QueryExecutor) error {
-	tableNames, err := listAllTableNames(ctx, queryExecutor)
-	if err != nil {
-		return oops.Wrapf(err, "failed to list all table names")
-	}
-
-	for _, tableName := range tableNames {
-		if _, err := queryExecutor.ExecContext(ctx, `TRUNCATE `+tableName); err != nil {
-			return oops.Wrapf(err, "failed to truncate table: %s", tableName)
-		}
-	}
-
-	return nil
-}
-
 // ExecFile executes an sql file.
 // When using github.com/go-sql-driver/mysql, ensure `multiStatements=true`.
 func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) error {
@@ -81,34 +65,4 @@ func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) err
 	}
 
 	return nil
-}
-
-func listAllTableNames(ctx context.Context, queryExecutor QueryExecutor) ([]string, error) {
-	rows, err := queryExecutor.QueryContext(ctx, `SHOW TABLES`)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to show tables")
-	}
-	defer rows.Close()
-
-	var tableNames []string
-
-	for rows.Next() {
-		var tableName string
-		{
-			if err := rows.Scan(&tableName); err != nil {
-				return nil, oops.Wrapf(err, "failed to scan table name")
-			}
-		}
-
-		tableNames = append(tableNames, tableName)
-	}
-
-	if err := rows.Close(); err != nil {
-		return nil, oops.Wrapf(err, "failed to close rows")
-	}
-	if err := rows.Err(); err != nil {
-		return nil, oops.Wrap(err)
-	}
-
-	return tableNames, nil
 }
