@@ -83,7 +83,10 @@ func setup(t *testing.T) {
 		// should not use t.Context()
 		ctx := context.Background()
 
-		err := sqlutil.TruncateAll(ctx, mysqlDB)
+		cleanerPath, err := filepath.Abs("./testdata/cleaner.sql")
+		require.NoError(t, err)
+
+		err = sqlutil.ExecFile(ctx, mysqlDB, cleanerPath)
 		require.NoError(t, err)
 	})
 

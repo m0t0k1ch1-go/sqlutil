@@ -1,0 +1,2 @@
+TRUNCATE `user`;
+TRUNCATE `task`;
