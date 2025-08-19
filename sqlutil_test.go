@@ -11,7 +11,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/samber/oops"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	testcontainersmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
@@ -41,19 +40,19 @@ func testMain(m *testing.M) int {
 	defer func() {
 		if mysqlDB != nil {
 			if err := mysqlDB.Close(); err != nil {
-				fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to close mysql db").Error())
+				fmt.Fprintln(os.Stderr, fmt.Errorf("failed to close mysql db: %w", err).Error())
 			}
 		}
 		if psqlDB != nil {
 			if err := psqlDB.Close(); err != nil {
-				fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to close postgresql db").Error())
+				fmt.Fprintln(os.Stderr, fmt.Errorf("failed to close postgresql db: %w", err).Error())
 			}
 		}
 		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
-			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate mysql container").Error())
+			fmt.Fprintln(os.Stderr, fmt.Errorf("failed to terminate mysql container: %w", err).Error())
 		}
 		if err := testcontainers.TerminateContainer(psqlCtr); err != nil {
-			fmt.Fprintln(os.Stderr, oops.Wrapf(err, "failed to terminate postgresql container").Error())
+			fmt.Fprintln(os.Stderr, fmt.Errorf("failed to terminate postgresql container: %w", err).Error())
 		}
 	}()
 
@@ -68,13 +67,13 @@ func testMain(m *testing.M) int {
 				testcontainersmysql.WithScripts("./testdata/schema.sql"),
 			)
 			if err != nil {
-				return oops.Wrapf(err, "failed to run mysql container")
+				return fmt.Errorf("failed to run mysql container: %w", err)
 			}
 		}
 
 		dsn, err := mysqlCtr.ConnectionString(ctx, "multiStatements=true")
 		if err != nil {
-			return oops.Wrapf(err, "failed to get mysql connection string")
+			return fmt.Errorf("failed to get mysql connection string: %w", err)
 		}
 
 		{
@@ -82,7 +81,7 @@ func testMain(m *testing.M) int {
 
 			mysqlDB, err = sql.Open("mysql", dsn)
 			if err != nil {
-				return oops.Wrapf(err, "failed to open mysql db: %s", dsn)
+				return fmt.Errorf("failed to open mysql db: %s: %w", dsn, err)
 			}
 		}
 
@@ -99,13 +98,13 @@ func testMain(m *testing.M) int {
 				testcontainerspostgres.BasicWaitStrategies(),
 			)
 			if err != nil {
-				return oops.Wrapf(err, "failed to run postgresql container")
+				return fmt.Errorf("failed to run postgresql container: %w", err)
 			}
 		}
 
 		dsn, err := psqlCtr.ConnectionString(ctx)
 		if err != nil {
-			return oops.Wrapf(err, "failed to get postgresql connection string")
+			return fmt.Errorf("failed to get postgresql connection string: %w", err)
 		}
 
 		{
@@ -113,7 +112,7 @@ func testMain(m *testing.M) int {
 
 			psqlDB, err = sql.Open("pgx", dsn)
 			if err != nil {
-				return oops.Wrapf(err, "failed to open postgresql db: %s", dsn)
+				return fmt.Errorf("failed to open postgresql db: %s: %w", dsn, err)
 			}
 		}
 
