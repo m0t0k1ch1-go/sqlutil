@@ -41,8 +41,7 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 		}
 	}()
 
-	err = f(ctx, tx)
-	err = oops.Wrap(err)
+	err = oops.Wrap(f(ctx, tx))
 
 	return
 }
