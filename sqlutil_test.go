@@ -162,25 +162,25 @@ func setup(t *testing.T) {
 func TestTransactFailure(t *testing.T) {
 	setup(t)
 
-	errSomethingWentWrong := errors.New("something went wrong")
-
 	tcs := []struct {
 		name string
 		db   *sql.DB
 	}{
 		{
-			name: "mysql",
-			db:   mysqlDB,
+			"mysql",
+			mysqlDB,
 		},
 		{
-			name: "postgresql",
-			db:   psqlDB,
+			"postgresql",
+			psqlDB,
 		},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
+
+			errSomethingWentWrong := errors.New("something went wrong")
 
 			err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
 				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`)
@@ -223,12 +223,12 @@ func TestTransactSuccess(t *testing.T) {
 		db   *sql.DB
 	}{
 		{
-			name: "mysql",
-			db:   mysqlDB,
+			"mysql",
+			mysqlDB,
 		},
 		{
-			name: "postgresql",
-			db:   psqlDB,
+			"postgresql",
+			psqlDB,
 		},
 	}
 
