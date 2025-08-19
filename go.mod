@@ -1,4 +1,4 @@
-module github.com/m0t0k1ch1-go/sqlutil/v2
+module github.com/m0t0k1ch1-go/sqlutil/v3
 
 go 1.24.0
 
