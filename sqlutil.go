@@ -16,7 +16,6 @@ type TxStarter interface {
 
 // QueryExecutor is an interface to execute a query.
 type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
