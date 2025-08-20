@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -140,12 +139,6 @@ func failMain(err error) int {
 }
 
 func TestTransact(t *testing.T) {
-	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
-	require.NoError(t, err)
-
-	cleanerPath, err := filepath.Abs("./testdata/cleaner.sql")
-	require.NoError(t, err)
-
 	tcs := []struct {
 		name string
 		db   *sql.DB
@@ -166,16 +159,15 @@ func TestTransact(t *testing.T) {
 				// should not use t.Context()
 				ctx := context.Background()
 
-				err = sqlutil.ExecFile(ctx, tc.db, cleanerPath)
-				require.NoError(t, err)
+				truncateTask(t, ctx, tc.db)
 
 				require.Zero(t, countAllTasks(t, ctx, tc.db))
 			})
 
 			ctx := t.Context()
 
-			err = sqlutil.ExecFile(ctx, tc.db, fixturePath)
-			require.NoError(t, err)
+			createTask(t, ctx, tc.db, 1, "task1.title")
+			createTask(t, ctx, tc.db, 2, "task2.title")
 
 			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 
@@ -228,6 +220,13 @@ func TestTransact(t *testing.T) {
 	}
 }
 
+func createTask(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
+	t.Helper()
+
+	_, err := dbtx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO task (id, title) VALUES (%d, '%s')`, id, title))
+	require.NoError(t, err)
+}
+
 func countAllTasks(t *testing.T, ctx context.Context, dbtx DBTX) (cnt int) {
 	t.Helper()
 
@@ -250,5 +249,12 @@ func completeTask(t *testing.T, ctx context.Context, dbtx DBTX, taskID int) {
 	t.Helper()
 
 	_, err := dbtx.ExecContext(ctx, fmt.Sprintf(`UPDATE task SET is_completed = true WHERE id = %d`, taskID))
+	require.NoError(t, err)
+}
+
+func truncateTask(t *testing.T, ctx context.Context, dbtx DBTX) {
+	t.Helper()
+
+	_, err := dbtx.ExecContext(ctx, `TRUNCATE task`)
 	require.NoError(t, err)
 }
