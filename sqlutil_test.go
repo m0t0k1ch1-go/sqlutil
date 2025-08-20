@@ -23,7 +23,14 @@ import (
 var (
 	mysqlDB *sql.DB
 	psqlDB  *sql.DB
+
+	errSomethingWentWrong = errors.New("something went wrong")
 )
+
+type DBTX interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func TestMain(m *testing.M) {
 	os.Exit(testMain(m))
@@ -56,13 +63,13 @@ func testMain(m *testing.M) int {
 		}
 	}()
 
-	g := new(errgroup.Group)
+	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		{
 			var err error
 
 			mysqlCtr, err = testcontainersmysql.Run(
-				ctx,
+				gctx,
 				"mysql:8.0",
 				testcontainersmysql.WithScripts("./testdata/schema.sql"),
 			)
@@ -71,7 +78,7 @@ func testMain(m *testing.M) int {
 			}
 		}
 
-		dsn, err := mysqlCtr.ConnectionString(ctx, "multiStatements=true")
+		dsn, err := mysqlCtr.ConnectionString(gctx, "multiStatements=true")
 		if err != nil {
 			return fmt.Errorf("failed to get mysql connection string: %w", err)
 		}
@@ -92,7 +99,7 @@ func testMain(m *testing.M) int {
 			var err error
 
 			psqlCtr, err = testcontainerspostgres.Run(
-				ctx,
+				gctx,
 				"postgres:17.6-alpine",
 				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
 				testcontainerspostgres.BasicWaitStrategies(),
@@ -102,7 +109,7 @@ func testMain(m *testing.M) int {
 			}
 		}
 
-		dsn, err := psqlCtr.ConnectionString(ctx)
+		dsn, err := psqlCtr.ConnectionString(gctx)
 		if err != nil {
 			return fmt.Errorf("failed to get postgresql connection string: %w", err)
 		}
@@ -131,39 +138,13 @@ func failMain(err error) int {
 	return 1
 }
 
-func setup(t *testing.T) {
-	t.Helper()
-
-	dbs := []*sql.DB{
-		mysqlDB,
-		psqlDB,
-	}
-
+func TestTransact(t *testing.T) {
 	fixturePath, err := filepath.Abs("./testdata/fixture.sql")
 	require.NoError(t, err)
 
 	cleanerPath, err := filepath.Abs("./testdata/cleaner.sql")
 	require.NoError(t, err)
 
-	t.Cleanup(func() {
-		// should not use t.Context()
-		ctx := context.Background()
-
-		for _, db := range dbs {
-			err = sqlutil.ExecFile(ctx, db, cleanerPath)
-			require.NoError(t, err)
-		}
-	})
-
-	for _, db := range dbs {
-		err = sqlutil.ExecFile(t.Context(), db, fixturePath)
-		require.NoError(t, err)
-	}
-}
-
-func TestTransactFailure(t *testing.T) {
-	setup(t)
-
 	tcs := []struct {
 		name string
 		db   *sql.DB
@@ -180,93 +161,81 @@ func TestTransactFailure(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				// should not use t.Context()
+				ctx := context.Background()
+
+				err = sqlutil.ExecFile(ctx, tc.db, cleanerPath)
+				require.NoError(t, err)
+
+				require.Zero(t, countAllTasks(t, ctx, tc.db))
+			})
+
 			ctx := t.Context()
 
-			errSomethingWentWrong := errors.New("something went wrong")
+			err = sqlutil.ExecFile(ctx, tc.db, fixturePath)
+			require.NoError(t, err)
 
-			err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`)
-				require.NoError(t, txErr)
+			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 
-				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`)
-				require.NoError(t, txErr)
+			t.Run("failure: rollback on error", func(t *testing.T) {
+				ctx := t.Context()
 
-				return errSomethingWentWrong
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+
+				err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
+					completeTask(t, txCtx, tx, 1)
+
+					return errSomethingWentWrong
+				})
+				require.ErrorIs(t, err, errSomethingWentWrong)
+
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
 			})
-			require.ErrorIs(t, err, errSomethingWentWrong)
 
-			{
-				var isCompleted bool
-				{
-					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&isCompleted)
-					require.NoError(t, err)
-				}
+			t.Run("success", func(t *testing.T) {
+				ctx := t.Context()
 
-				require.False(t, isCompleted)
-			}
-			{
-				var isCompleted bool
-				{
-					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&isCompleted)
-					require.NoError(t, err)
-				}
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
 
-				require.False(t, isCompleted)
-			}
+				err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
+					completeTask(t, txCtx, tx, 1)
+
+					return nil
+				})
+				require.NoError(t, err)
+
+				require.True(t, isTaskCompleted(t, ctx, tc.db, 1))
+				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+			})
 		})
 	}
 }
 
-func TestTransactSuccess(t *testing.T) {
-	setup(t)
+func countAllTasks(t *testing.T, ctx context.Context, dbtx DBTX) (cnt int) {
+	t.Helper()
 
-	tcs := []struct {
-		name string
-		db   *sql.DB
-	}{
-		{
-			"mysql",
-			mysqlDB,
-		},
-		{
-			"postgresql",
-			psqlDB,
-		},
-	}
+	err := dbtx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task`).Scan(&cnt)
+	require.NoError(t, err)
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := t.Context()
+	return
+}
 
-			err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) (txErr error) {
-				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 1`)
-				require.NoError(t, txErr)
+func isTaskCompleted(t *testing.T, ctx context.Context, dbtx DBTX, taskID int) (isCompleted bool) {
+	t.Helper()
 
-				_, txErr = tx.ExecContext(txCtx, `UPDATE task SET is_completed = true WHERE id = 2`)
-				require.NoError(t, txErr)
+	err := dbtx.QueryRowContext(ctx, fmt.Sprintf(`SELECT is_completed FROM task WHERE id = %d`, taskID)).Scan(&isCompleted)
+	require.NoError(t, err)
 
-				return
-			})
-			require.NoError(t, err)
+	return
+}
 
-			{
-				var isCompleted bool
-				{
-					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 1`).Scan(&isCompleted)
-					require.NoError(t, err)
-				}
+func completeTask(t *testing.T, ctx context.Context, dbtx DBTX, taskID int) {
+	t.Helper()
 
-				require.True(t, isCompleted)
-			}
-			{
-				var isCompleted bool
-				{
-					err := tc.db.QueryRowContext(ctx, `SELECT is_completed FROM task WHERE id = 2`).Scan(&isCompleted)
-					require.NoError(t, err)
-				}
-
-				require.True(t, isCompleted)
-			}
-		})
-	}
+	_, err := dbtx.ExecContext(ctx, fmt.Sprintf(`UPDATE task SET is_completed = true WHERE id = %d`, taskID))
+	require.NoError(t, err)
 }
