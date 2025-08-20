@@ -9,17 +9,17 @@ import (
 	"path/filepath"
 )
 
-// TxStarter is an interface to start a transaction.
+// TxStarter starts a new transaction.
 type TxStarter interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-// QueryExecutor is an interface to execute a query.
+// QueryExecutor executes a query.
 type QueryExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// Transact is a helper function to execute a function in a transaction.
+// Transact runs the given function within a transaction.
 func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, *sql.Tx) error) (err error) {
 	var tx *sql.Tx
 	{
@@ -46,7 +46,7 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 	return
 }
 
-// ExecFile executes an sql file.
+// ExecFile executes a SQL file.
 // When using github.com/go-sql-driver/mysql, ensure `multiStatements=true`.
 func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) error {
 	if !filepath.IsAbs(path) {
