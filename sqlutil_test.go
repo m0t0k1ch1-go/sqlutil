@@ -24,6 +24,7 @@ var (
 	mysqlDB *sql.DB
 	psqlDB  *sql.DB
 
+	errPanic              = errors.New("panic")
 	errSomethingWentWrong = errors.New("something went wrong")
 )
 
@@ -178,11 +179,26 @@ func TestTransact(t *testing.T) {
 
 			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 
-			t.Run("failure: rollback on error", func(t *testing.T) {
+			require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
+			require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+
+			t.Run("failure: rollback on panic", func(t *testing.T) {
 				ctx := t.Context()
+
+				require.PanicsWithError(t, errPanic.Error(), func() {
+					sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
+						completeTask(t, txCtx, tx, 1)
+
+						panic(errPanic)
+					})
+				})
 
 				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
 				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+			})
+
+			t.Run("failure: rollback on error", func(t *testing.T) {
+				ctx := t.Context()
 
 				err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
 					completeTask(t, txCtx, tx, 1)
@@ -197,9 +213,6 @@ func TestTransact(t *testing.T) {
 
 			t.Run("success", func(t *testing.T) {
 				ctx := t.Context()
-
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
 
 				err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
 					completeTask(t, txCtx, tx, 1)
