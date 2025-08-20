@@ -1,2 +1,2 @@
-INSERT INTO task (id, title) VALUES (1, 'Ask questions');
-INSERT INTO task (id, title) VALUES (2, 'Brainstorm ideas');
+INSERT INTO task (id, title) VALUES (1, 'task1.title');
+INSERT INTO task (id, title) VALUES (2, 'task2.title');

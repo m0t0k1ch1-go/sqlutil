@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -178,8 +179,8 @@ func TestTransact(t *testing.T) {
 				ctx := t.Context()
 
 				require.PanicsWithError(t, errPanic.Error(), func() {
-					sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
-						completeTask(t, txCtx, tx, 1)
+					sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
+						completeTask(t, ctx, tx, 1)
 
 						panic(errPanic)
 					})
@@ -192,8 +193,8 @@ func TestTransact(t *testing.T) {
 			t.Run("failure: rollback on error", func(t *testing.T) {
 				ctx := t.Context()
 
-				err := sqlutil.Transact(ctx, tc.db, func(txCtx context.Context, tx *sql.Tx) error {
-					completeTask(t, txCtx, tx, 1)
+				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
+					completeTask(t, ctx, tx, 1)
 
 					return errSomethingWentWrong
 				})
@@ -215,6 +216,47 @@ func TestTransact(t *testing.T) {
 
 				require.True(t, isTaskCompleted(t, ctx, tc.db, 1))
 				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+			})
+		})
+	}
+}
+
+func TestExecFile(t *testing.T) {
+	tcs := []struct {
+		name string
+		db   *sql.DB
+	}{
+		{
+			"mysql",
+			mysqlDB,
+		},
+		{
+			"postgresql",
+			psqlDB,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("failure: path must be absolute", func(t *testing.T) {
+				ctx := t.Context()
+
+				err := sqlutil.ExecFile(ctx, tc.db, "./testdata/fixture.sql")
+				require.ErrorContains(t, err, "path must be absolute")
+
+				require.Zero(t, countAllTasks(t, ctx, tc.db))
+			})
+
+			t.Run("success", func(t *testing.T) {
+				ctx := t.Context()
+
+				fPath, err := filepath.Abs("./testdata/fixture.sql")
+				require.NoError(t, err)
+
+				err = sqlutil.ExecFile(ctx, tc.db, fPath)
+				require.NoError(t, err)
+
+				require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 			})
 		})
 	}
