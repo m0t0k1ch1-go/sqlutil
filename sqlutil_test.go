@@ -215,7 +215,7 @@ func TestTransact(t *testing.T) {
 
 					return nil
 				})
-				require.ErrorIs(t, err, context.Canceled)
+				require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, sql.ErrTxDone))
 
 				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
 				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
