@@ -1,6 +1,5 @@
 {
   "scripts": {
-    "commit": "cz",
     "prepare": "husky"
   },
   "config": {
