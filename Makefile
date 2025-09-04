@@ -1,3 +1,14 @@
+.PHONY: setup
+setup: deps-dev
+
+.PHONY: deps-dev
+deps-dev:
+	pnpm install
+
+.PHONY: commit
+commit:
+	pnpm cz
+
 .PHONY: deps
 deps:
 	go mod download
