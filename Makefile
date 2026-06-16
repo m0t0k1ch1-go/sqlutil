@@ -1,18 +1,18 @@
 .PHONY: setup
-setup: deps-dev
-
-.PHONY: deps-dev
-deps-dev:
-	pnpm install
-
-.PHONY: commit
-commit:
-	pnpm cz
+setup: deps/node
 
 .PHONY: deps
 deps:
 	go mod download
 	go mod verify
+
+.PHONY: deps/node
+deps/node:
+	pnpm install --frozen-lockfile
+
+.PHONY: commit
+commit:
+	pnpm czg
 
 .PHONY: lint
 lint:
