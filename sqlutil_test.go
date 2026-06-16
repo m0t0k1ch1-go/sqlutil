@@ -139,18 +139,78 @@ func failMain(err error) int {
 	return 1
 }
 
+type Task struct {
+	ID          int
+	Title       string
+	URL         sqlutil.HTTPURL
+	IsCompleted bool
+}
+
 func TestTransact(t *testing.T) {
 	tcs := []struct {
-		name string
-		db   *sql.DB
+		name         string
+		db           *sql.DB
+		createTask   func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL)
+		getTask      func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task
+		completeTask func(t *testing.T, ctx context.Context, dbtx DBTX, id int)
 	}{
 		{
 			"mysql",
 			mysqlDB,
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL) {
+				t.Helper()
+
+				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title, url) VALUE (?, ?, ?)`, id, title, url)
+				require.NoError(t, err)
+			},
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
+				t.Helper()
+
+				var task Task
+				{
+					err := dbtx.
+						QueryRowContext(ctx, `SELECT id, title, url, is_completed FROM task WHERE id = ?`, id).
+						Scan(&task.ID, &task.Title, &task.URL, &task.IsCompleted)
+					require.NoError(t, err)
+				}
+
+				return task
+			},
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) {
+				t.Helper()
+
+				_, err := dbtx.ExecContext(ctx, `UPDATE task SET is_completed = true WHERE id = ?`, id)
+				require.NoError(t, err)
+			},
 		},
 		{
 			"postgresql",
 			psqlDB,
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL) {
+				t.Helper()
+
+				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title, url) VALUES ($1, $2, $3)`, id, title, url)
+				require.NoError(t, err)
+			},
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
+				t.Helper()
+
+				var task Task
+				{
+					err := dbtx.
+						QueryRowContext(ctx, `SELECT id, title, url, is_completed FROM task WHERE id = $1`, id).
+						Scan(&task.ID, &task.Title, &task.URL, &task.IsCompleted)
+					require.NoError(t, err)
+				}
+
+				return task
+			},
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) {
+				t.Helper()
+
+				_, err := dbtx.ExecContext(ctx, `UPDATE task SET is_completed = true WHERE id = $1`, id)
+				require.NoError(t, err)
+			},
 		},
 	}
 
@@ -167,41 +227,50 @@ func TestTransact(t *testing.T) {
 
 			ctx := t.Context()
 
-			createTask(t, ctx, tc.db, 1, "task1.title")
-			createTask(t, ctx, tc.db, 2, "task2.title")
+			tc.createTask(t, ctx, tc.db, 1, "task1", sqlutil.MustNewHTTPURLFromString("http://m0t0k1ch1.com/task/1"))
+			tc.createTask(t, ctx, tc.db, 2, "task2", sqlutil.MustNewHTTPURLFromString("https://m0t0k1ch1.com/task/2"))
 
 			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 
-			require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
-			require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+			task1 := tc.getTask(t, ctx, tc.db, 1)
+			require.False(t, task1.IsCompleted)
+
+			task2 := tc.getTask(t, ctx, tc.db, 2)
+			require.False(t, task2.IsCompleted)
 
 			t.Run("failure: rollback on panic", func(t *testing.T) {
 				ctx := t.Context()
 
 				require.PanicsWithError(t, errPanic.Error(), func() {
 					sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-						completeTask(t, ctx, tx, 1)
+						tc.completeTask(t, ctx, tx, 1)
 
 						panic(errPanic)
 					})
 				})
 
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+				task1 = tc.getTask(t, ctx, tc.db, 1)
+				require.False(t, task1.IsCompleted)
+
+				task2 = tc.getTask(t, ctx, tc.db, 2)
+				require.False(t, task2.IsCompleted)
 			})
 
 			t.Run("failure: rollback on error", func(t *testing.T) {
 				ctx := t.Context()
 
 				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					completeTask(t, ctx, tx, 1)
+					tc.completeTask(t, ctx, tx, 1)
 
 					return errSomethingWentWrong
 				})
 				require.ErrorIs(t, err, errSomethingWentWrong)
 
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+				task1 = tc.getTask(t, ctx, tc.db, 1)
+				require.False(t, task1.IsCompleted)
+
+				task2 = tc.getTask(t, ctx, tc.db, 2)
+				require.False(t, task2.IsCompleted)
 			})
 
 			t.Run("failure: rollback on cancel", func(t *testing.T) {
@@ -210,29 +279,35 @@ func TestTransact(t *testing.T) {
 				txCtx, txCancel := context.WithCancel(ctx)
 
 				err := sqlutil.Transact(txCtx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					completeTask(t, ctx, tx, 1)
+					tc.completeTask(t, ctx, tx, 1)
 					txCancel()
 
 					return nil
 				})
 				require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, sql.ErrTxDone))
 
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 1))
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+				task1 = tc.getTask(t, ctx, tc.db, 1)
+				require.False(t, task1.IsCompleted)
+
+				task2 = tc.getTask(t, ctx, tc.db, 2)
+				require.False(t, task2.IsCompleted)
 			})
 
 			t.Run("success", func(t *testing.T) {
 				ctx := t.Context()
 
 				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					completeTask(t, ctx, tx, 1)
+					tc.completeTask(t, ctx, tx, 1)
 
 					return nil
 				})
 				require.NoError(t, err)
 
-				require.True(t, isTaskCompleted(t, ctx, tc.db, 1))
-				require.False(t, isTaskCompleted(t, ctx, tc.db, 2))
+				task1 = tc.getTask(t, ctx, tc.db, 1)
+				require.True(t, task1.IsCompleted)
+
+				task2 = tc.getTask(t, ctx, tc.db, 2)
+				require.False(t, task2.IsCompleted)
 			})
 		})
 	}
@@ -279,13 +354,6 @@ func TestExecFile(t *testing.T) {
 	}
 }
 
-func createTask(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
-	t.Helper()
-
-	_, err := dbtx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO task (id, title) VALUES (%d, '%s')`, id, title))
-	require.NoError(t, err)
-}
-
 func countAllTasks(t *testing.T, ctx context.Context, dbtx DBTX) (cnt int) {
 	t.Helper()
 
@@ -293,22 +361,6 @@ func countAllTasks(t *testing.T, ctx context.Context, dbtx DBTX) (cnt int) {
 	require.NoError(t, err)
 
 	return
-}
-
-func isTaskCompleted(t *testing.T, ctx context.Context, dbtx DBTX, taskID int) (isCompleted bool) {
-	t.Helper()
-
-	err := dbtx.QueryRowContext(ctx, fmt.Sprintf(`SELECT is_completed FROM task WHERE id = %d`, taskID)).Scan(&isCompleted)
-	require.NoError(t, err)
-
-	return
-}
-
-func completeTask(t *testing.T, ctx context.Context, dbtx DBTX, taskID int) {
-	t.Helper()
-
-	_, err := dbtx.ExecContext(ctx, fmt.Sprintf(`UPDATE task SET is_completed = true WHERE id = %d`, taskID))
-	require.NoError(t, err)
 }
 
 func truncateTask(t *testing.T, ctx context.Context, dbtx DBTX) {
