@@ -164,6 +164,11 @@ func TestNewHTTPURLFromString(t *testing.T) {
 				"",
 				"invalid URL string: empty",
 			},
+			{
+				"missing scheme",
+				"://m0t0k1ch1.com",
+				"invalid URL string",
+			},
 		}
 
 		for _, tc := range tcs {
