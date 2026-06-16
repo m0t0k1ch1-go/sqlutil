@@ -1,5 +1,6 @@
 CREATE TABLE task (
   id BIGINT NOT NULL PRIMARY KEY,
   title VARCHAR(255) NOT NULL,
+  url TEXT NOT NULL,
   is_completed BOOLEAN NOT NULL DEFAULT false
 );
