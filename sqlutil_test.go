@@ -23,15 +23,7 @@ import (
 var (
 	mysqlDB *sql.DB
 	psqlDB  *sql.DB
-
-	errPanic              = errors.New("panic")
-	errSomethingWentWrong = errors.New("something went wrong")
 )
-
-type DBTX interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
 
 func TestMain(m *testing.M) {
 	os.Exit(testMain(m))
@@ -139,6 +131,11 @@ func failMain(err error) int {
 	return 1
 }
 
+type DBTX interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 type Task struct {
 	ID          int
 	Title       string
@@ -241,6 +238,8 @@ func TestTransact(t *testing.T) {
 			t.Run("failure: rollback on panic", func(t *testing.T) {
 				ctx := t.Context()
 
+				errPanic := errors.New("panic")
+
 				require.PanicsWithError(t, errPanic.Error(), func() {
 					sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
 						tc.completeTask(t, ctx, tx, 1)
@@ -258,6 +257,8 @@ func TestTransact(t *testing.T) {
 
 			t.Run("failure: rollback on error", func(t *testing.T) {
 				ctx := t.Context()
+
+				errSomethingWentWrong := errors.New("something went wrong")
 
 				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
 					tc.completeTask(t, ctx, tx, 1)
