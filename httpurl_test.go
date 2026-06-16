@@ -3,6 +3,7 @@ package sqlutil_test
 import (
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"testing"
@@ -17,6 +18,8 @@ func TestHTTPURL(t *testing.T) {
 	require.Implements(t, (*fmt.Stringer)(nil), &hu)
 	require.Implements(t, (*driver.Valuer)(nil), &hu)
 	require.Implements(t, (*sql.Scanner)(nil), &hu)
+	require.Implements(t, (*json.Marshaler)(nil), &hu)
+	require.Implements(t, (*json.Unmarshaler)(nil), &hu)
 }
 
 func TestNewHTTPURL(t *testing.T) {
@@ -162,12 +165,12 @@ func TestNewHTTPURLFromString(t *testing.T) {
 			{
 				"empty",
 				"",
-				"invalid URL string: empty",
+				"invalid url string: empty",
 			},
 			{
 				"missing scheme",
 				"://m0t0k1ch1.com",
-				"invalid URL string",
+				"invalid url string",
 			},
 		}
 
@@ -217,7 +220,7 @@ func TestMustNewHTTPURLFromString(t *testing.T) {
 			{
 				"empty",
 				"",
-				"invalid URL string: empty",
+				"invalid url string: empty",
 			},
 		}
 
@@ -341,7 +344,12 @@ func TestHTTPURL_Scan(t *testing.T) {
 			{
 				"string: empty",
 				"",
-				"invalid source: invalid URL string: empty",
+				"invalid source: invalid url string: empty",
+			},
+			{
+				"string: missing scheme",
+				"://m0t0k1ch1.com",
+				"invalid source: invalid url string",
 			},
 			{
 				"string: invalid url.URL: invalid host: empty",
@@ -359,7 +367,7 @@ func TestHTTPURL_Scan(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				var hu sqlutil.HTTPURL
 				err := hu.Scan(tc.in)
-				require.EqualError(t, err, tc.want)
+				require.ErrorContains(t, err, tc.want)
 			})
 		}
 	})
@@ -386,6 +394,117 @@ func TestHTTPURL_Scan(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				var hu sqlutil.HTTPURL
 				err := hu.Scan(tc.in)
+				require.NoError(t, err)
+				require.Equal(t, tc.want, hu.String())
+			})
+		}
+	})
+}
+
+func TestHTTPURL_MarshalJSON(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		tcs := []struct {
+			name string
+			in   sqlutil.HTTPURL
+			want []byte
+		}{
+			{
+				"http",
+				sqlutil.MustNewHTTPURLFromString("http://m0t0k1ch1.com"),
+				[]byte(`"http://m0t0k1ch1.com"`),
+			},
+			{
+				"https",
+				sqlutil.MustNewHTTPURLFromString("https://m0t0k1ch1.com"),
+				[]byte(`"https://m0t0k1ch1.com"`),
+			},
+		}
+
+		for _, tc := range tcs {
+			t.Run(tc.name, func(t *testing.T) {
+				b, err := tc.in.MarshalJSON()
+				require.NoError(t, err)
+				require.Equal(t, tc.want, b)
+			})
+		}
+	})
+}
+
+func TestHTTPURL_UnmarshalJSON(t *testing.T) {
+	t.Run("failure", func(t *testing.T) {
+		tcs := []struct {
+			name string
+			in   []byte
+			want string
+		}{
+			{
+				"empty",
+				[]byte{},
+				"invalid json value: empty",
+			},
+			{
+				"null",
+				[]byte(`null`),
+				"invalid json value: null",
+			},
+			{
+				"bool",
+				[]byte(`true`),
+				"invalid json string",
+			},
+			{
+				"string: empty",
+				[]byte(`""`),
+				"invalid json string: invalid url string: empty",
+			},
+			{
+				"string: missing scheme",
+				[]byte(`"://m0t0k1ch1.com"`),
+				"invalid json string: invalid url string",
+			},
+			{
+				"string: invalid host: empty",
+				[]byte(`"http://"`),
+				"invalid json string: invalid url.URL: invalid host: empty",
+			},
+			{
+				"string: invalid scheme: ftp",
+				[]byte(`"ftp://m0t0k1ch1.com"`),
+				"invalid json string: invalid url.URL: invalid scheme: must be http or https",
+			},
+		}
+
+		for _, tc := range tcs {
+			t.Run(tc.name, func(t *testing.T) {
+				var hu sqlutil.HTTPURL
+				err := hu.UnmarshalJSON(tc.in)
+				require.ErrorContains(t, err, tc.want)
+			})
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		tcs := []struct {
+			name string
+			in   []byte
+			want string
+		}{
+			{
+				"string: http",
+				[]byte(`"http://m0t0k1ch1.com"`),
+				"http://m0t0k1ch1.com",
+			},
+			{
+				"string: https",
+				[]byte(`"https://m0t0k1ch1.com"`),
+				"https://m0t0k1ch1.com",
+			},
+		}
+
+		for _, tc := range tcs {
+			t.Run(tc.name, func(t *testing.T) {
+				var hu sqlutil.HTTPURL
+				err := hu.UnmarshalJSON(tc.in)
 				require.NoError(t, err)
 				require.Equal(t, tc.want, hu.String())
 			})
