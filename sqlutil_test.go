@@ -93,7 +93,7 @@ func testMain(m *testing.M) int {
 
 			psqlCtr, err = testcontainerspostgres.Run(
 				gctx,
-				"postgres:17.6-alpine",
+				"postgres:17.10-alpine",
 				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
 				testcontainerspostgres.BasicWaitStrategies(),
 			)
@@ -139,7 +139,6 @@ type DBTX interface {
 type Task struct {
 	ID          int
 	Title       string
-	URL         sqlutil.HTTPURL
 	IsCompleted bool
 }
 
@@ -147,17 +146,17 @@ func TestTransact(t *testing.T) {
 	tcs := []struct {
 		name         string
 		db           *sql.DB
-		createTask   func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL)
+		createTask   func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string)
 		getTask      func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task
 		completeTask func(t *testing.T, ctx context.Context, dbtx DBTX, id int)
 	}{
 		{
 			"mysql",
 			mysqlDB,
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL) {
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
 				t.Helper()
 
-				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title, url) VALUE (?, ?, ?)`, id, title, url)
+				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title) VALUE (?, ?)`, id, title)
 				require.NoError(t, err)
 			},
 			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
@@ -166,8 +165,8 @@ func TestTransact(t *testing.T) {
 				var task Task
 				{
 					err := dbtx.
-						QueryRowContext(ctx, `SELECT id, title, url, is_completed FROM task WHERE id = ?`, id).
-						Scan(&task.ID, &task.Title, &task.URL, &task.IsCompleted)
+						QueryRowContext(ctx, `SELECT id, title, is_completed FROM task WHERE id = ?`, id).
+						Scan(&task.ID, &task.Title, &task.IsCompleted)
 					require.NoError(t, err)
 				}
 
@@ -183,10 +182,10 @@ func TestTransact(t *testing.T) {
 		{
 			"postgresql",
 			psqlDB,
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string, url sqlutil.HTTPURL) {
+			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
 				t.Helper()
 
-				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title, url) VALUES ($1, $2, $3)`, id, title, url)
+				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title) VALUES ($1, $2)`, id, title)
 				require.NoError(t, err)
 			},
 			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
@@ -195,8 +194,8 @@ func TestTransact(t *testing.T) {
 				var task Task
 				{
 					err := dbtx.
-						QueryRowContext(ctx, `SELECT id, title, url, is_completed FROM task WHERE id = $1`, id).
-						Scan(&task.ID, &task.Title, &task.URL, &task.IsCompleted)
+						QueryRowContext(ctx, `SELECT id, title, is_completed FROM task WHERE id = $1`, id).
+						Scan(&task.ID, &task.Title, &task.IsCompleted)
 					require.NoError(t, err)
 				}
 
@@ -224,8 +223,8 @@ func TestTransact(t *testing.T) {
 
 			ctx := t.Context()
 
-			tc.createTask(t, ctx, tc.db, 1, "task1", sqlutil.MustNewHTTPURLFromString("http://m0t0k1ch1.com/task/1"))
-			tc.createTask(t, ctx, tc.db, 2, "task2", sqlutil.MustNewHTTPURLFromString("https://m0t0k1ch1.com/task/2"))
+			tc.createTask(t, ctx, tc.db, 1, "task1")
+			tc.createTask(t, ctx, tc.db, 2, "task2")
 
 			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
 
