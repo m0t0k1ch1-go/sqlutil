@@ -20,30 +20,25 @@ type QueryExecutor interface {
 }
 
 // Transact runs the given function within a transaction.
-func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, *sql.Tx) error) (err error) {
-	var tx *sql.Tx
-	{
-		if tx, err = txStarter.BeginTx(ctx, nil); err != nil {
-			return fmt.Errorf("failed to begin transaction: %w", err)
-		}
+func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, *sql.Tx) error) error {
+	tx, err := txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
 	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			panic(r)
-		} else if err != nil {
-			tx.Rollback()
-		} else {
-			if err = tx.Commit(); err != nil {
-				err = fmt.Errorf("failed to commit transaction: %w", err)
-			}
-		}
+		_ = tx.Rollback()
 	}()
 
-	err = f(ctx, tx)
+	if err := f(ctx, tx); err != nil {
+		return err
+	}
 
-	return
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 // ExecFile executes a SQL file.
