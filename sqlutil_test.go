@@ -43,13 +43,15 @@ func testMain(m *testing.M) int {
 				fmt.Fprintln(os.Stderr, fmt.Errorf("failed to close mysql db: %w", err).Error())
 			}
 		}
+		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
+			fmt.Fprintln(os.Stderr, fmt.Errorf("failed to terminate mysql container: %w", err).Error())
+		}
+	}()
+	defer func() {
 		if psqlDB != nil {
 			if err := psqlDB.Close(); err != nil {
 				fmt.Fprintln(os.Stderr, fmt.Errorf("failed to close postgresql db: %w", err).Error())
 			}
-		}
-		if err := testcontainers.TerminateContainer(mysqlCtr); err != nil {
-			fmt.Fprintln(os.Stderr, fmt.Errorf("failed to terminate mysql container: %w", err).Error())
 		}
 		if err := testcontainers.TerminateContainer(psqlCtr); err != nil {
 			fmt.Fprintln(os.Stderr, fmt.Errorf("failed to terminate postgresql container: %w", err).Error())
@@ -58,62 +60,50 @@ func testMain(m *testing.M) int {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		{
-			var err error
+		var (
+			dsn string
+			err error
+		)
 
-			mysqlCtr, err = testcontainersmysql.Run(
-				gctx,
-				"mysql:8.0",
-				testcontainersmysql.WithScripts("./testdata/schema.sql"),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to run mysql container: %w", err)
-			}
+		if mysqlCtr, err = testcontainersmysql.Run(
+			gctx,
+			"mysql:8.4",
+			testcontainersmysql.WithScripts("./testdata/schema.sql"),
+		); err != nil {
+			return fmt.Errorf("failed to run mysql container: %w", err)
 		}
 
-		dsn, err := mysqlCtr.ConnectionString(gctx, "multiStatements=true")
-		if err != nil {
+		if dsn, err = mysqlCtr.ConnectionString(gctx, "multiStatements=true"); err != nil {
 			return fmt.Errorf("failed to get mysql connection string: %w", err)
 		}
 
-		{
-			var err error
-
-			mysqlDB, err = sql.Open("mysql", dsn)
-			if err != nil {
-				return fmt.Errorf("failed to open mysql db: %s: %w", dsn, err)
-			}
+		if mysqlDB, err = sql.Open("mysql", dsn); err != nil {
+			return fmt.Errorf("failed to open mysql db: %w", err)
 		}
 
 		return nil
 	})
 	g.Go(func() error {
-		{
-			var err error
+		var (
+			dsn string
+			err error
+		)
 
-			psqlCtr, err = testcontainerspostgres.Run(
-				gctx,
-				"postgres:17.10-alpine",
-				testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
-				testcontainerspostgres.BasicWaitStrategies(),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to run postgresql container: %w", err)
-			}
+		if psqlCtr, err = testcontainerspostgres.Run(
+			gctx,
+			"postgres:18.6-alpine",
+			testcontainerspostgres.WithInitScripts("./testdata/schema.sql"),
+			testcontainerspostgres.BasicWaitStrategies(),
+		); err != nil {
+			return fmt.Errorf("failed to run postgresql container: %w", err)
 		}
 
-		dsn, err := psqlCtr.ConnectionString(gctx)
-		if err != nil {
+		if dsn, err = psqlCtr.ConnectionString(gctx); err != nil {
 			return fmt.Errorf("failed to get postgresql connection string: %w", err)
 		}
 
-		{
-			var err error
-
-			psqlDB, err = sql.Open("pgx", dsn)
-			if err != nil {
-				return fmt.Errorf("failed to open postgresql db: %s: %w", dsn, err)
-			}
+		if psqlDB, err = sql.Open("pgx", dsn); err != nil {
+			return fmt.Errorf("failed to open postgresql db: %w", err)
 		}
 
 		return nil
@@ -143,69 +133,67 @@ type Task struct {
 }
 
 func TestTransact(t *testing.T) {
+	type operations struct {
+		createTask    func(ctx context.Context, dbtx DBTX, id int, title string) error
+		countAllTasks func(ctx context.Context, dbtx DBTX) (int, error)
+		getTask       func(ctx context.Context, dbtx DBTX, id int) (Task, error)
+		completeTask  func(ctx context.Context, dbtx DBTX, id int) error
+		truncate      func(ctx context.Context, dbtx DBTX) error
+	}
+
 	tcs := []struct {
-		name         string
-		db           *sql.DB
-		createTask   func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string)
-		getTask      func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task
-		completeTask func(t *testing.T, ctx context.Context, dbtx DBTX, id int)
+		name string
+		db   *sql.DB
+		ops  operations
 	}{
 		{
 			"mysql",
 			mysqlDB,
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
-				t.Helper()
+			operations{
+				func(ctx context.Context, dbtx DBTX, id int, title string) error {
+					_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUE (?, ?)", id, title)
 
-				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title) VALUE (?, ?)`, id, title)
-				require.NoError(t, err)
-			},
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
-				t.Helper()
-
-				var task Task
-				{
-					err := dbtx.
-						QueryRowContext(ctx, `SELECT id, title, is_completed FROM task WHERE id = ?`, id).
+					return err
+				},
+				countAllTasks,
+				func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
+					err = dbtx.
+						QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = ?", id).
 						Scan(&task.ID, &task.Title, &task.IsCompleted)
-					require.NoError(t, err)
-				}
 
-				return task
-			},
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) {
-				t.Helper()
+					return
+				},
+				func(ctx context.Context, dbtx DBTX, id int) error {
+					_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = ?", id)
 
-				_, err := dbtx.ExecContext(ctx, `UPDATE task SET is_completed = true WHERE id = ?`, id)
-				require.NoError(t, err)
+					return err
+				},
+				truncate,
 			},
 		},
 		{
 			"postgresql",
 			psqlDB,
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int, title string) {
-				t.Helper()
+			operations{
+				func(ctx context.Context, dbtx DBTX, id int, title string) error {
+					_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUES ($1, $2)", id, title)
 
-				_, err := dbtx.ExecContext(ctx, `INSERT INTO task (id, title) VALUES ($1, $2)`, id, title)
-				require.NoError(t, err)
-			},
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) Task {
-				t.Helper()
-
-				var task Task
-				{
-					err := dbtx.
-						QueryRowContext(ctx, `SELECT id, title, is_completed FROM task WHERE id = $1`, id).
+					return err
+				},
+				countAllTasks,
+				func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
+					err = dbtx.
+						QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = $1", id).
 						Scan(&task.ID, &task.Title, &task.IsCompleted)
-					require.NoError(t, err)
-				}
 
-				return task
-			},
-			func(t *testing.T, ctx context.Context, dbtx DBTX, id int) {
-				t.Helper()
+					return
+				},
+				func(ctx context.Context, dbtx DBTX, id int) error {
+					_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = $1", id)
 
-				_, err := dbtx.ExecContext(ctx, `UPDATE task SET is_completed = true WHERE id = $1`, id)
-				require.NoError(t, err)
+					return err
+				},
+				truncate,
 			},
 		},
 	}
@@ -213,44 +201,57 @@ func TestTransact(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				// should not use t.Context()
+				// t.Context() is canceled just before cleanup
 				ctx := context.Background()
 
-				truncateTask(t, ctx, tc.db)
-
-				require.Zero(t, countAllTasks(t, ctx, tc.db))
+				err := tc.ops.truncate(ctx, tc.db)
+				require.NoError(t, err)
 			})
 
 			ctx := t.Context()
 
-			tc.createTask(t, ctx, tc.db, 1, "task1")
-			tc.createTask(t, ctx, tc.db, 2, "task2")
+			{
+				err := tc.ops.createTask(ctx, tc.db, 1, "task1")
+				require.NoError(t, err)
+			}
+			{
+				err := tc.ops.createTask(ctx, tc.db, 2, "task2")
+				require.NoError(t, err)
+			}
 
-			require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
+			taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+			require.NoError(t, err)
+			require.Equal(t, 2, taskCnt)
 
-			task1 := tc.getTask(t, ctx, tc.db, 1)
+			task1, err := tc.ops.getTask(ctx, tc.db, 1)
+			require.NoError(t, err)
 			require.False(t, task1.IsCompleted)
 
-			task2 := tc.getTask(t, ctx, tc.db, 2)
+			task2, err := tc.ops.getTask(ctx, tc.db, 2)
+			require.NoError(t, err)
 			require.False(t, task2.IsCompleted)
 
 			t.Run("failure: rollback on panic", func(t *testing.T) {
 				ctx := t.Context()
 
-				errPanic := errors.New("panic")
+				panicErr := errors.New("panic")
 
-				require.PanicsWithError(t, errPanic.Error(), func() {
-					sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-						tc.completeTask(t, ctx, tx, 1)
+				require.PanicsWithError(t, panicErr.Error(), func() {
+					sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
+						if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+							return err
+						}
 
-						panic(errPanic)
+						panic(panicErr)
 					})
 				})
 
-				task1 = tc.getTask(t, ctx, tc.db, 1)
+				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2 = tc.getTask(t, ctx, tc.db, 2)
+				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
 
@@ -259,17 +260,21 @@ func TestTransact(t *testing.T) {
 
 				errSomethingWentWrong := errors.New("something went wrong")
 
-				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					tc.completeTask(t, ctx, tx, 1)
+				err := sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
+					if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+						return err
+					}
 
 					return errSomethingWentWrong
 				})
 				require.ErrorIs(t, err, errSomethingWentWrong)
 
-				task1 = tc.getTask(t, ctx, tc.db, 1)
+				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2 = tc.getTask(t, ctx, tc.db, 2)
+				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
 
@@ -278,35 +283,64 @@ func TestTransact(t *testing.T) {
 
 				txCtx, txCancel := context.WithCancel(ctx)
 
-				err := sqlutil.Transact(txCtx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					tc.completeTask(t, ctx, tx, 1)
+				err := sqlutil.Transact(txCtx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
+					if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+						return err
+					}
+
 					txCancel()
 
 					return nil
 				})
 				require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, sql.ErrTxDone))
 
-				task1 = tc.getTask(t, ctx, tc.db, 1)
+				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2 = tc.getTask(t, ctx, tc.db, 2)
+				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				require.NoError(t, err)
+				require.False(t, task2.IsCompleted)
+			})
+
+			t.Run("failure: rollback on update in read-only transaction", func(t *testing.T) {
+				ctx := t.Context()
+
+				var errUpdateRejected error
+
+				err := sqlutil.Transact(ctx, tc.db, &sql.TxOptions{
+					ReadOnly: true,
+				}, func(ctx context.Context, tx *sql.Tx) error {
+					errUpdateRejected = tc.ops.completeTask(ctx, tx, 1)
+
+					return errUpdateRejected
+				})
+				require.Error(t, err)
+				require.ErrorIs(t, err, errUpdateRejected)
+
+				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				require.NoError(t, err)
+				require.False(t, task1.IsCompleted)
+
+				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
 
 			t.Run("success", func(t *testing.T) {
 				ctx := t.Context()
 
-				err := sqlutil.Transact(ctx, tc.db, func(ctx context.Context, tx *sql.Tx) error {
-					tc.completeTask(t, ctx, tx, 1)
-
-					return nil
+				err := sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
+					return tc.ops.completeTask(ctx, tx, 1)
 				})
 				require.NoError(t, err)
 
-				task1 = tc.getTask(t, ctx, tc.db, 1)
+				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				require.NoError(t, err)
 				require.True(t, task1.IsCompleted)
 
-				task2 = tc.getTask(t, ctx, tc.db, 2)
+				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
 		})
@@ -314,17 +348,28 @@ func TestTransact(t *testing.T) {
 }
 
 func TestExecFile(t *testing.T) {
+	type operations struct {
+		countAllTasks func(ctx context.Context, dbtx DBTX) (int, error)
+	}
+
 	tcs := []struct {
 		name string
 		db   *sql.DB
+		ops  operations
 	}{
 		{
 			"mysql",
 			mysqlDB,
+			operations{
+				countAllTasks,
+			},
 		},
 		{
 			"postgresql",
 			psqlDB,
+			operations{
+				countAllTasks,
+			},
 		},
 	}
 
@@ -336,7 +381,9 @@ func TestExecFile(t *testing.T) {
 				err := sqlutil.ExecFile(ctx, tc.db, "./testdata/fixture.sql")
 				require.ErrorContains(t, err, "path must be absolute")
 
-				require.Zero(t, countAllTasks(t, ctx, tc.db))
+				taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+				require.NoError(t, err)
+				require.Zero(t, taskCnt)
 			})
 
 			t.Run("success", func(t *testing.T) {
@@ -348,24 +395,22 @@ func TestExecFile(t *testing.T) {
 				err = sqlutil.ExecFile(ctx, tc.db, fPath)
 				require.NoError(t, err)
 
-				require.Equal(t, 2, countAllTasks(t, ctx, tc.db))
+				taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+				require.NoError(t, err)
+				require.Equal(t, 2, taskCnt)
 			})
 		})
 	}
 }
 
-func countAllTasks(t *testing.T, ctx context.Context, dbtx DBTX) (cnt int) {
-	t.Helper()
-
-	err := dbtx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task`).Scan(&cnt)
-	require.NoError(t, err)
+func countAllTasks(ctx context.Context, dbtx DBTX) (cnt int, err error) {
+	err = dbtx.QueryRowContext(ctx, "SELECT COUNT(*) FROM task").Scan(&cnt)
 
 	return
 }
 
-func truncateTask(t *testing.T, ctx context.Context, dbtx DBTX) {
-	t.Helper()
+func truncate(ctx context.Context, dbtx DBTX) error {
+	_, err := dbtx.ExecContext(ctx, "TRUNCATE task")
 
-	_, err := dbtx.ExecContext(ctx, `TRUNCATE task`)
-	require.NoError(t, err)
+	return err
 }
