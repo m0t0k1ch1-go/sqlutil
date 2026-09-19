@@ -9,23 +9,21 @@ import (
 	"path/filepath"
 )
 
-// TxStarter starts a new transaction.
-type TxStarter interface {
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-}
-
-// QueryExecutor executes a query.
-type QueryExecutor interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Transact runs the given function within a transaction.
-func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, *sql.Tx) error) error {
-	tx, err := txStarter.BeginTx(ctx, nil)
+// Transact begins a transaction on db with opts, runs f with it, and commits if f returns nil.
+// If f returns an error or panics, the transaction is rolled back and the error or panic is propagated.
+// A nil opts means the default transaction options are used, as in [sql.DB.BeginTx].
+func Transact(
+	ctx context.Context,
+	db interface {
+		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+	},
+	opts *sql.TxOptions,
+	f func(context.Context, *sql.Tx) error,
+) error {
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-
 	defer func() {
 		_ = tx.Rollback()
 	}()
@@ -41,9 +39,17 @@ func Transact(ctx context.Context, txStarter TxStarter, f func(context.Context, 
 	return nil
 }
 
-// ExecFile executes a SQL file.
-// When using github.com/go-sql-driver/mysql, ensure `multiStatements=true`.
-func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) error {
+// ExecFile reads the SQL file at path and executes its entire contents with a single dbtx.ExecContext call, without splitting it into statements.
+// path must be absolute.
+//
+// When using [github.com/go-sql-driver/mysql], the DSN must include multiStatements=true for files containing multiple statements.
+func ExecFile(
+	ctx context.Context,
+	dbtx interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	},
+	path string,
+) error {
 	if !filepath.IsAbs(path) {
 		return errors.New("path must be absolute")
 	}
@@ -53,7 +59,7 @@ func ExecFile(ctx context.Context, queryExecutor QueryExecutor, path string) err
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	if _, err := queryExecutor.ExecContext(ctx, string(b)); err != nil {
+	if _, err := dbtx.ExecContext(ctx, string(b)); err != nil {
 		return err
 	}
 
