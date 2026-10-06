@@ -379,7 +379,7 @@ func TestExecFile(t *testing.T) {
 				ctx := t.Context()
 
 				err := sqlutil.ExecFile(ctx, tc.db, "./testdata/fixture.sql")
-				require.ErrorContains(t, err, "path must be absolute")
+				require.ErrorContains(t, err, "invalid path: must be absolute")
 
 				taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
 				require.NoError(t, err)

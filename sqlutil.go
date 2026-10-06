@@ -51,7 +51,7 @@ func ExecFile(
 	path string,
 ) error {
 	if !filepath.IsAbs(path) {
-		return errors.New("path must be absolute")
+		return errors.New("invalid path: must be absolute")
 	}
 
 	b, err := os.ReadFile(path)
