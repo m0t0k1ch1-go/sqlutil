@@ -1,18 +1,9 @@
-.PHONY: setup
-setup: deps/node
+include conventions.mk
 
 .PHONY: deps
 deps:
 	go mod download
 	go mod verify
-
-.PHONY: deps/node
-deps/node:
-	pnpm install --frozen-lockfile
-
-.PHONY: commit
-commit:
-	pnpm czg
 
 .PHONY: lint
 lint:
