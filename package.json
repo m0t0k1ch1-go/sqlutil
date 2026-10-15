@@ -9,5 +9,5 @@
     "czg": "1.14.0",
     "husky": "9.1.7"
   },
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.11.2"
 }
