@@ -1,4 +1,4 @@
-include conventions.mk
+include template.mk
 
 .PHONY: deps
 deps:
