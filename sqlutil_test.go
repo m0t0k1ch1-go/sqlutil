@@ -141,59 +141,67 @@ func TestTransact(t *testing.T) {
 		truncate      func(ctx context.Context, dbtx DBTX) error
 	}
 
+	type conditions struct {
+		ops operations
+	}
+
 	tcs := []struct {
 		name string
 		db   *sql.DB
-		ops  operations
+		cond conditions
 	}{
 		{
 			"mysql",
 			mysqlDB,
-			operations{
-				func(ctx context.Context, dbtx DBTX, id int, title string) error {
-					_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUE (?, ?)", id, title)
+			conditions{
+				operations{
+					func(ctx context.Context, dbtx DBTX, id int, title string) error {
+						_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUE (?, ?)", id, title)
 
-					return err
-				},
-				countAllTasks,
-				func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
-					err = dbtx.
-						QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = ?", id).
-						Scan(&task.ID, &task.Title, &task.IsCompleted)
+						return err
+					},
+					countAllTasks,
+					func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
+						err = dbtx.
+							QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = ?", id).
+							Scan(&task.ID, &task.Title, &task.IsCompleted)
 
-					return
-				},
-				func(ctx context.Context, dbtx DBTX, id int) error {
-					_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = ?", id)
+						return
+					},
+					func(ctx context.Context, dbtx DBTX, id int) error {
+						_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = ?", id)
 
-					return err
+						return err
+					},
+					truncate,
 				},
-				truncate,
 			},
 		},
 		{
 			"postgresql",
 			psqlDB,
-			operations{
-				func(ctx context.Context, dbtx DBTX, id int, title string) error {
-					_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUES ($1, $2)", id, title)
+			conditions{
+				operations{
+					func(ctx context.Context, dbtx DBTX, id int, title string) error {
+						_, err := dbtx.ExecContext(ctx, "INSERT INTO task (id, title) VALUES ($1, $2)", id, title)
 
-					return err
-				},
-				countAllTasks,
-				func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
-					err = dbtx.
-						QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = $1", id).
-						Scan(&task.ID, &task.Title, &task.IsCompleted)
+						return err
+					},
+					countAllTasks,
+					func(ctx context.Context, dbtx DBTX, id int) (task Task, err error) {
+						err = dbtx.
+							QueryRowContext(ctx, "SELECT id, title, is_completed FROM task WHERE id = $1", id).
+							Scan(&task.ID, &task.Title, &task.IsCompleted)
 
-					return
-				},
-				func(ctx context.Context, dbtx DBTX, id int) error {
-					_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = $1", id)
+						return
+					},
+					func(ctx context.Context, dbtx DBTX, id int) error {
+						_, err := dbtx.ExecContext(ctx, "UPDATE task SET is_completed = true WHERE id = $1", id)
 
-					return err
+						return err
+					},
+					truncate,
 				},
-				truncate,
 			},
 		},
 	}
@@ -204,30 +212,30 @@ func TestTransact(t *testing.T) {
 				// t.Context() is canceled just before cleanup
 				ctx := context.Background()
 
-				err := tc.ops.truncate(ctx, tc.db)
+				err := tc.cond.ops.truncate(ctx, tc.db)
 				require.NoError(t, err)
 			})
 
 			ctx := t.Context()
 
 			{
-				err := tc.ops.createTask(ctx, tc.db, 1, "task1")
+				err := tc.cond.ops.createTask(ctx, tc.db, 1, "task1")
 				require.NoError(t, err)
 			}
 			{
-				err := tc.ops.createTask(ctx, tc.db, 2, "task2")
+				err := tc.cond.ops.createTask(ctx, tc.db, 2, "task2")
 				require.NoError(t, err)
 			}
 
-			taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+			taskCnt, err := tc.cond.ops.countAllTasks(ctx, tc.db)
 			require.NoError(t, err)
 			require.Equal(t, 2, taskCnt)
 
-			task1, err := tc.ops.getTask(ctx, tc.db, 1)
+			task1, err := tc.cond.ops.getTask(ctx, tc.db, 1)
 			require.NoError(t, err)
 			require.False(t, task1.IsCompleted)
 
-			task2, err := tc.ops.getTask(ctx, tc.db, 2)
+			task2, err := tc.cond.ops.getTask(ctx, tc.db, 2)
 			require.NoError(t, err)
 			require.False(t, task2.IsCompleted)
 
@@ -238,7 +246,7 @@ func TestTransact(t *testing.T) {
 
 				require.PanicsWithError(t, panicErr.Error(), func() {
 					sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
-						if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+						if err := tc.cond.ops.completeTask(ctx, tx, 1); err != nil {
 							return err
 						}
 
@@ -246,11 +254,11 @@ func TestTransact(t *testing.T) {
 					})
 				})
 
-				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				task1, err = tc.cond.ops.getTask(ctx, tc.db, 1)
 				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				task2, err = tc.cond.ops.getTask(ctx, tc.db, 2)
 				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
@@ -261,7 +269,7 @@ func TestTransact(t *testing.T) {
 				errSomethingWentWrong := errors.New("something went wrong")
 
 				err := sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
-					if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+					if err := tc.cond.ops.completeTask(ctx, tx, 1); err != nil {
 						return err
 					}
 
@@ -269,11 +277,11 @@ func TestTransact(t *testing.T) {
 				})
 				require.ErrorIs(t, err, errSomethingWentWrong)
 
-				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				task1, err = tc.cond.ops.getTask(ctx, tc.db, 1)
 				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				task2, err = tc.cond.ops.getTask(ctx, tc.db, 2)
 				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
@@ -284,7 +292,7 @@ func TestTransact(t *testing.T) {
 				txCtx, txCancel := context.WithCancel(ctx)
 
 				err := sqlutil.Transact(txCtx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
-					if err := tc.ops.completeTask(ctx, tx, 1); err != nil {
+					if err := tc.cond.ops.completeTask(ctx, tx, 1); err != nil {
 						return err
 					}
 
@@ -294,11 +302,11 @@ func TestTransact(t *testing.T) {
 				})
 				require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, sql.ErrTxDone))
 
-				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				task1, err = tc.cond.ops.getTask(ctx, tc.db, 1)
 				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				task2, err = tc.cond.ops.getTask(ctx, tc.db, 2)
 				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
@@ -311,18 +319,18 @@ func TestTransact(t *testing.T) {
 				err := sqlutil.Transact(ctx, tc.db, &sql.TxOptions{
 					ReadOnly: true,
 				}, func(ctx context.Context, tx *sql.Tx) error {
-					errUpdateRejected = tc.ops.completeTask(ctx, tx, 1)
+					errUpdateRejected = tc.cond.ops.completeTask(ctx, tx, 1)
 
 					return errUpdateRejected
 				})
 				require.Error(t, err)
 				require.ErrorIs(t, err, errUpdateRejected)
 
-				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				task1, err = tc.cond.ops.getTask(ctx, tc.db, 1)
 				require.NoError(t, err)
 				require.False(t, task1.IsCompleted)
 
-				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				task2, err = tc.cond.ops.getTask(ctx, tc.db, 2)
 				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
@@ -331,15 +339,15 @@ func TestTransact(t *testing.T) {
 				ctx := t.Context()
 
 				err := sqlutil.Transact(ctx, tc.db, nil, func(ctx context.Context, tx *sql.Tx) error {
-					return tc.ops.completeTask(ctx, tx, 1)
+					return tc.cond.ops.completeTask(ctx, tx, 1)
 				})
 				require.NoError(t, err)
 
-				task1, err = tc.ops.getTask(ctx, tc.db, 1)
+				task1, err = tc.cond.ops.getTask(ctx, tc.db, 1)
 				require.NoError(t, err)
 				require.True(t, task1.IsCompleted)
 
-				task2, err = tc.ops.getTask(ctx, tc.db, 2)
+				task2, err = tc.cond.ops.getTask(ctx, tc.db, 2)
 				require.NoError(t, err)
 				require.False(t, task2.IsCompleted)
 			})
@@ -352,23 +360,31 @@ func TestExecFile(t *testing.T) {
 		countAllTasks func(ctx context.Context, dbtx DBTX) (int, error)
 	}
 
+	type conditions struct {
+		ops operations
+	}
+
 	tcs := []struct {
 		name string
 		db   *sql.DB
-		ops  operations
+		cond conditions
 	}{
 		{
 			"mysql",
 			mysqlDB,
-			operations{
-				countAllTasks,
+			conditions{
+				operations{
+					countAllTasks,
+				},
 			},
 		},
 		{
 			"postgresql",
 			psqlDB,
-			operations{
-				countAllTasks,
+			conditions{
+				operations{
+					countAllTasks,
+				},
 			},
 		},
 	}
@@ -381,7 +397,7 @@ func TestExecFile(t *testing.T) {
 				err := sqlutil.ExecFile(ctx, tc.db, "./testdata/fixture.sql")
 				require.ErrorContains(t, err, "invalid path: must be absolute")
 
-				taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+				taskCnt, err := tc.cond.ops.countAllTasks(ctx, tc.db)
 				require.NoError(t, err)
 				require.Zero(t, taskCnt)
 			})
@@ -395,7 +411,7 @@ func TestExecFile(t *testing.T) {
 				err = sqlutil.ExecFile(ctx, tc.db, fPath)
 				require.NoError(t, err)
 
-				taskCnt, err := tc.ops.countAllTasks(ctx, tc.db)
+				taskCnt, err := tc.cond.ops.countAllTasks(ctx, tc.db)
 				require.NoError(t, err)
 				require.Equal(t, 2, taskCnt)
 			})
