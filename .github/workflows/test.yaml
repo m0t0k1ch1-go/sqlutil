@@ -5,23 +5,6 @@ on:
       - "**"
 jobs:
   test:
-    runs-on: ubuntu-latest
     permissions:
       id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Install dependencies
-        run: make deps
-      - name: Test
-        run: make test
-        env:
-          APP_TEST_FLAGS: -race -coverprofile=coverage.txt -covermode=atomic
-      - name: Upload coverage profile to Codecov
-        uses: codecov/codecov-action@v7
-        with:
-          use_oidc: true
+    uses: m0t0k1ch1-go/workflows/.github/workflows/test.yaml@main
